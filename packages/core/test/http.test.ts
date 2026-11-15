@@ -212,3 +212,14 @@ describe("container", () => {
     expect(() => app.container.get(C)).toThrow(/No provider registered for C/);
   });
 });
+
+describe("t.literal", () => {
+  test("accepts listed values, coerces query text, rejects others", async () => {
+    const { validate } = await import("@qala/core");
+    const P = t.literal([0, 1, 2, 3]);
+    expect(validate(P, 2)).toEqual({ ok: true, value: 2 });
+    expect(validate(P, "3", true)).toEqual({ ok: true, value: 3 });
+    expect(validate(P, 9)).toEqual({ ok: false, issues: [{ path: "", message: "must be one of: 0, 1, 2, 3" }] });
+    expect(validate(P, "urgent")).toMatchObject({ ok: false });
+  });
+});

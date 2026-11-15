@@ -111,6 +111,19 @@ export class SchemaBuilder {
       return input;
     });
   }
+  /** One of the given literal values (strings, numbers or booleans): `t.literal([0, 1, 2, 3])`. */
+  literal<const V extends readonly (string | number | boolean)[]>(values: V): Schema<V[number]> {
+    const allowed: (string | number | boolean)[] = [];
+    for (const v of values) allowed.push(v);
+    return node("literal", (input, path, issues, coerce) => {
+      for (const v of allowed) {
+        if (input === v) return v;
+        if (coerce && typeof input === "string" && String(v) === input) return v;
+      }
+      issues.push({ path, message: `must be one of: ${allowed.map((v) => String(v)).join(", ")}` });
+      return input;
+    });
+  }
   /** One of the given string literals. */
   enum<const V extends readonly string[]>(values: V): Schema<V[number]> {
     const allowed: string[] = [];
