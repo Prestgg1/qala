@@ -8,7 +8,7 @@ Two jobs in one command.
 
 ## `qala check --fix`: scriptc pitfalls
 
-scriptc compiles a statically analysable subset of TypeScript (see [scriptc.md](../scriptc.md)). `--fix` finds the pitfalls below in your app code and rewrites them with minimal text edits (the TypeScript compiler API; formatting and comments stay), then runs the architecture check.
+scriptc compiles a statically analysable subset of TypeScript (see [scriptc.md](./native.md)). `--fix` finds the pitfalls below in your app code and rewrites them with minimal text edits (the TypeScript compiler API; formatting and comments stay), then runs the architecture check.
 
 ```
 $ qala check --fix

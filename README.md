@@ -37,6 +37,60 @@ $ ldd dist/app
 - **Short code.** A route is one line. Validation, status codes, error responses and wiring are conventions, not boilerplate.
 - **Types end to end.** The request schemas and the handler's return type flow to the frontend client. Rename a field on the server and the frontend fails to compile.
 
+## How short is Qala code?
+
+The [example app](examples/tasks) (tasks + comments, auth, validation, domain rules, search, Clean Architecture) was
+rewritten when the conventions below landed; same HTTP API, same end-to-end tests:
+
+| | before | after |
+|---|---|---|
+| files (app, config, migrations) | 17 | 13 |
+| lines (no blanks or comments) | 277 | 190 (−31%) |
+| providers / wiring | 15 lines | 0 (generated) |
+| repositories (contracts + Postgres classes) | 4 files, 69 lines | 1 query + 1 class, 19 lines |
+
+<table><tr><th>before</th><th>after</th></tr><tr><td>
+
+```ts
+export const TasksController = controller(
+  { tasks: TaskService }, ({ tasks }) => ({
+  show: action({ params: id },
+    ({ params }) => tasks.get(params.id)),   // get() throws 404
+  store: action({ body: NewTask },
+    async ({ body }) => created(await tasks.create(body))),
+  destroy: action({ params: id }, async ({ params }) => {
+    await tasks.remove(params.id);
+    return noContent();
+  }),
+}));
+// + app/providers.ts, a repository contract,
+//   a Postgres repository, a write-guard middleware
+```
+
+</td><td>
+
+```ts
+export class TasksController {
+  constructor(private tasks: TaskService) {}
+
+  show = action({ params },
+    ({ id }) => this.tasks.get(id));        // null → 404
+  store = action({ body: NewTask, auth: true },
+    ({ body }) => this.tasks.create(body)); // → 201
+  destroy = action({ params, auth: true },
+    ({ id }) => this.tasks.remove(id));     // → 204
+}
+// DI, Database (from DATABASE_URL), auth types and
+// env are generated; search is one typed query
+```
+
+</td></tr></table>
+
+What does the work: dependency injection generated from constructor types, `Database` provided from `DATABASE_URL`,
+response conventions (`undefined` → 204, `null` → 404, `store` → 201), `auth: true` with a typed `user` from
+`app/auth.ts`, declarative `errors({...})`, models that carry their own constraints, `query(($) => …)` with inferred
+parameter types, `resource(Model)` for plain CRUD, and a typed `env` from `.env.example`.
+
 ## Features
 
 | | |
@@ -241,7 +295,7 @@ For tests, pass a `transport` that calls `app.handle(...)` in-process.
 
 `qala build` runs the architecture check, generates `.qala/main.ts` (static imports of every controller — scriptc has no dynamic imports) and calls `scriptc build --node-islands=off`, which fails the build if anything would need Node.js. The framework is consumed as TypeScript source through `tsconfig` `paths`, so scriptc compiles it together with your code.
 
-Writing code for scriptc mostly means writing ordinary, well-typed TypeScript. See [docs/scriptc.md](docs/scriptc.md) for the rules the framework follows and what to avoid in app code (default exports, `any`-shaped data, dynamic code).
+Writing code for scriptc mostly means writing ordinary, well-typed TypeScript. See [docs/guide/native.md](docs/guide/native.md) for the rules the framework follows and what to avoid in app code (default exports, `any`-shaped data, dynamic code).
 
 ## Performance
 

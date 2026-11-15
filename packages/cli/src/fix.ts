@@ -4,7 +4,7 @@ import * as ts from "typescript";
 import { LAYOUT, rel, walk } from "./util";
 
 /**
- * `qala check --fix`: finds the scriptc pitfalls from docs/scriptc.md in app code and rewrites them with
+ * `qala check --fix`: finds the scriptc pitfalls from docs/guide/native.md in app code and rewrites them with
  * minimal text edits (TypeScript compiler API, so formatting and comments around the edit stay as they are).
  */
 export type Fix = { file: string; line: number; message: string };

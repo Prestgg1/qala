@@ -12,7 +12,8 @@ export function layerOf(relPath: string): Layer | null {
   if (relPath.startsWith("app/infrastructure/")) return "infrastructure";
   if (relPath.startsWith("app/http/")) return "http";
   if (relPath.startsWith("app/shared/")) return "shared";
-  if (relPath === LAYOUT.providers || relPath === LAYOUT.kernel || relPath.startsWith("config/")) return "root";
+  // Composition roots: wiring, the global pipeline, auth hook, model event handlers and config.
+  if (relPath === LAYOUT.providers || relPath === LAYOUT.kernel || relPath === "app/auth.ts" || relPath.startsWith("app/events/") || relPath.startsWith("config/")) return "root";
   return null;
 }
 

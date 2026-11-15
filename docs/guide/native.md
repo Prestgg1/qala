@@ -1,3 +1,7 @@
+---
+title: Writing code for scriptc
+---
+
 # Writing code for scriptc
 
 Qala apps are compiled by [scriptc](https://scriptc.dev), which turns a statically analysable subset of TypeScript into machine code. Everything below was learned while building the framework against scriptc 0.4.13; `qala build` uses `--node-islands=off`, so code outside the subset fails the build instead of silently pulling in Node.js.
@@ -26,15 +30,20 @@ The phantom is wrapped in a function type because `unknown` and literal types do
 
 **Narrow before casting into a union.** `row as Row` inside `Row | null` fails at run time; check for `null` first, then cast.
 
-**Override abstract methods without `async`.** An `async` method cannot override an abstract method yet; return the promise instead (`find(id: string): Promise<Task | null> { return this.db.table(Task).find(id); }`). The `make:repository` template does this.
+**Override abstract methods without `async`.** An `async` method cannot override an abstract method yet; return the promise instead (`find(id: string): Promise<Task | null> { return this.db.table(Task).find(id); }`). `qala check --fix` rewrites an `async` override for you.
 
-**Avoid `void` generics.** `transaction<T>` with a callback returning nothing is handled through `unknown` internally.
+**`void` is fine in handlers.** An action handler may return nothing (`void`/`Promise<void>`): it answers 204. Inside your own generic helpers, prefer `undefined` over `void` as a type argument; `transaction<T>` handles a callback returning nothing internally.
 
 **Tagged templates cannot cross into a Node island.** Not a concern with `--node-islands=off`, but it is why Qala uses its own PostgreSQL client instead of `postgres` (which only runs as a Node island and is several times slower there).
 
 ## Checking your code
 
 ```sh
+qala check --fix                      # rewrites the pitfalls above in app code (async overrides, abstract tokens,
+                                      # union factories, untyped empty arrays, default imports/exports, export *)
 bunx scriptc coverage .qala/main.ts   # what compiles statically, and why not
 qala build                            # fails on anything that would need Node.js
 ```
+
+Most of these rules never reach your code: dependency injection, providers, decoders and queries are generated with
+the explicit types scriptc needs.

@@ -3,6 +3,7 @@ import { join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 import { loadCore } from "./run";
 import { CliError, color, LAYOUT, walk } from "./util";
+import { appDatabaseUrl } from "./database-url";
 
 /**
  * `qala migrate:make <name>`: compares the app's models with the live database and writes the SQL that
@@ -345,17 +346,14 @@ export function nextMigrationName(dir: string, name: string): string {
 
 /** `qala migrate:make <name> [--print]`. */
 export async function migrateMakeCommand(root: string, name: string, options: { print?: boolean } = {}): Promise<number> {
-  const configFile = join(root, LAYOUT.config);
-  if (!existsSync(configFile)) throw new CliError(`${LAYOUT.config} is missing; it must export config with databaseUrl`);
+  const url = await appDatabaseUrl(root);
   const previous = process.cwd();
   process.chdir(root);
   try {
-    const { config } = (await import(pathToFileURL(configFile).href)) as { config?: { databaseUrl?: string } };
-    if (config === undefined || typeof config.databaseUrl !== "string") throw new CliError(`${LAYOUT.config} must export \`config\` with a \`databaseUrl\` string`);
     const models = await loadModels(root);
     if (models.length === 0) throw new CliError("No models found under app/ (export const X = model(...))");
     const core = (await loadCore(root)) as unknown as { Database: new (url: string) => Queryable };
-    const db = new core.Database(config.databaseUrl);
+    const db = new core.Database(url);
     let plan: MigrationPlan;
     try {
       plan = diffSchema(models.map(tableSpec), await readSnapshot(db));

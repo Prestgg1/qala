@@ -7,7 +7,7 @@ import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Database } from "@qala/core";
-import { config } from "../config/app";
+import { env } from "../.qala/env.gen";
 
 const ROOT = join(import.meta.dir, "..");
 const CLI = join(ROOT, "../../packages/cli/src/bin.ts");
@@ -42,7 +42,7 @@ async function waitFor(url: string): Promise<number> {
 }
 
 // Data: 1000 tasks, one task to comment on.
-const db = new Database(config.databaseUrl);
+const db = new Database(env.DATABASE_URL);
 run("bun", [CLI, "migrate"]);
 await db.execute("truncate tasks cascade");
 await db.execute("insert into tasks (title, description, priority, done) select 'Task number ' || i, 'Description of task ' || i, 1 + i % 4, i % 3 = 0 from generate_series(1, 1000) i");

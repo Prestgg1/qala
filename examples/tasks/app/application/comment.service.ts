@@ -1,26 +1,29 @@
-import { NotFoundError } from "@qala/core";
-import type { Comment, NewComment } from "../domain/comment";
-import { CommentRepository } from "../domain/comment.repository";
+import type { Database } from "@qala/core";
+import { Comment, type NewComment } from "../domain/comment";
 import { TaskService } from "./task.service";
 
-/** Comment use cases: a comment always belongs to an existing task. */
+/** Comment use cases: a comment always belongs to an existing task (`null` → 404). */
 export class CommentService {
   constructor(
-    private readonly comments: CommentRepository,
+    private readonly db: Database,
     private readonly tasks: TaskService,
   ) {}
 
-  async forTask(taskId: string): Promise<Comment[]> {
-    await this.tasks.get(taskId);
-    return this.comments.forTask(taskId);
+  private get comments() {
+    return this.db.table(Comment);
   }
 
-  async add(input: NewComment): Promise<Comment> {
-    await this.tasks.get(input.taskId);
-    return this.comments.create(input);
+  async forTask(taskId: string): Promise<Comment[] | null> {
+    if ((await this.tasks.get(taskId)) === null) return null;
+    return this.comments.all({ where: { taskId }, orderBy: ["createdAt", "asc"] });
   }
 
-  async remove(id: string): Promise<void> {
-    if (!(await this.comments.delete(id))) throw new NotFoundError(`Comment ${id} not found`);
+  async add(input: NewComment): Promise<Comment | null> {
+    if ((await this.tasks.get(input.taskId)) === null) return null;
+    return this.comments.insert(input);
+  }
+
+  async remove(id: string): Promise<null | undefined> {
+    return (await this.comments.delete(id)) ? undefined : null;
   }
 }

@@ -17,12 +17,17 @@
       ],
       "@qala/client": [
         "../../packages/client/src/index.ts"
+      ],
+      "@qala/core/query": [
+        "../../packages/core/src/orm/builder/index.ts"
+      ],
+      "@qala/core/testing": [
+        "../../packages/core/src/testing.ts"
       ]
     }
   },
   "include": [
     "app",
-    "config",
     ".qala/**/*.ts",
     "web",
     "test",

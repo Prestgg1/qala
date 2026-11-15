@@ -276,7 +276,9 @@ export function generateProviders(root: string, roots: DiRoots): DiResult {
   };
 
   /** How a token is satisfied, or why it cannot be. Memoised; cycles are reported separately. */
-  type Plan = { kind: "construct"; info: ClassInfo; deps: (Ref | null)[] } | { kind: "bind"; info: ClassInfo; impl: ClassInfo } | { kind: "provided" } | { kind: "missing"; reason: string };
+  type Plan = { kind: "construct"; info: ClassInfo; deps: (Ref | null)[] } | { kind: "bind"; info: ClassInfo; impl: ClassInfo } | { kind: "database" } | { kind: "provided" } | { kind: "missing"; reason: string };
+  // Convention: `Database` from @qala/core is built from DATABASE_URL when .env.example declares it.
+  const databaseFromEnv = envDeclares(root, "DATABASE_URL");
   const plans = new Map<string, Plan>();
   const planFor = (ref: Ref): Plan => {
     const key = refKey(ref);
@@ -284,6 +286,7 @@ export function generateProviders(root: string, roots: DiRoots): DiResult {
     if (cached !== undefined) return cached;
     let plan: Plan;
     if (overrides.tokens.has(key)) plan = { kind: "provided" };
+    else if (ref.kind === "external" && ref.module === "@qala/core" && ref.name === "Database" && databaseFromEnv) plan = { kind: "database" };
     else if (ref.kind === "external") {
       plan = overrides.opaque ? { kind: "provided" } : { kind: "missing", reason: `${ref.name} (from ${ref.module}) is not a class in app/; register it in app/providers.ts, e.g. provide(${ref.name}, () => new ${ref.name}(…))` };
     } else {
@@ -326,7 +329,7 @@ export function generateProviders(root: string, roots: DiRoots): DiResult {
       return false;
     }
     const plan = planFor(ref);
-    if (plan.kind === "provided") return true;
+    if (plan.kind === "provided" || plan.kind === "database") return true;
     if (plan.kind === "missing") {
       problem.text = plan.reason;
       return false;
@@ -356,6 +359,11 @@ export function generateProviders(root: string, roots: DiRoots): DiResult {
     const key = refKey(ref);
     if (emitted.has(key)) return;
     const plan = planFor(ref);
+    if (plan.kind === "database") {
+      emitted.add(key);
+      emit.unshift(plan);
+      return;
+    }
     if (plan.kind !== "construct" && plan.kind !== "bind") return;
     if (!satisfiable(ref, [], { text: null })) return;
     emitted.add(key);
@@ -370,12 +378,24 @@ export function generateProviders(root: string, roots: DiRoots): DiResult {
     include({ kind: "class", key: c.key });
   }
   for (const root of rootKeys(scanner, roots)) include({ kind: "class", key: root.key });
+  // resource() controllers and event sinks resolve Database at run time, so it is provided whenever DATABASE_URL is declared.
+  if (databaseFromEnv) include({ kind: "external", module: "@qala/core", name: "Database" });
 
   if (emit.length === 0) return { source: null, errors, warnings, count: 0 };
-  return { source: render(root, scanner, emit as Exclude<Plan, { kind: "provided" } | { kind: "missing" }>[]), errors, warnings, count: emit.length };
+  return { source: render(root, scanner, emit as Emitted[]), errors, warnings, count: emit.length };
 }
 
-function render(root: string, scanner: Scanner, plans: ({ kind: "construct"; info: ClassInfo; deps: (Ref | null)[] } | { kind: "bind"; info: ClassInfo; impl: ClassInfo })[]): string {
+type Emitted = { kind: "construct"; info: ClassInfo; deps: (Ref | null)[] } | { kind: "bind"; info: ClassInfo; impl: ClassInfo } | { kind: "database" };
+
+/** Whether `.env.example` declares `key` (the typed env then provides it as `env.<key>`). */
+function envDeclares(root: string, key: string): boolean {
+  const file = join(root, ".env.example");
+  return existsSync(file) && new RegExp(`^\\s*${key}\\s*=`, "m").test(readFileSync(file, "utf8"));
+}
+
+function render(root: string, scanner: Scanner, all: Emitted[]): string {
+  const usesDatabase = all.some((p) => p.kind === "database");
+  const plans = all.filter((p): p is Exclude<Emitted, { kind: "database" }> => p.kind !== "database");
   const dir = join(root, LAYOUT.generated);
   // Local names: the class name, or a path-qualified one when two classes share it.
   const counts = new Map<string, number>();
@@ -418,6 +438,12 @@ function render(root: string, scanner: Scanner, plans: ({ kind: "construct"; inf
     "",
     `import { ${usesBind ? "bind, " : ""}singleton, type Provider } from "@qala/core";`,
   ];
+  if (usesDatabase) {
+    note({ kind: "external", module: "@qala/core", name: "Database" });
+    if (!imports.has("@qala/core")) imports.set("@qala/core", new Set(["Database"]));
+    else imports.get("@qala/core")!.add("Database");
+    lines.push('import { env } from "./env.gen";');
+  }
   for (const [from, names] of [...imports.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
     if (from === "@qala/core") {
       lines[4] = `import { ${usesBind ? "bind, " : ""}singleton, type Provider, ${[...names].sort().join(", ")} } from "@qala/core";`;
@@ -426,6 +452,7 @@ function render(root: string, scanner: Scanner, plans: ({ kind: "construct"; inf
     lines.push(`import { ${[...names].sort().join(", ")} } from "${from}";`);
   }
   lines.push("", "export const generatedProviders: Provider[] = [");
+  if (usesDatabase) lines.push("  singleton<Database>(Database, () => new Database(env.DATABASE_URL)),");
   for (const p of plans) {
     const t = local({ kind: "class", key: p.info.key });
     if (p.kind === "bind") {

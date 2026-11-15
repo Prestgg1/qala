@@ -1,20 +1,22 @@
-import { action, controller, created, get, noContent, post, t } from "@qala/core";
+import { action, get, post, t } from "@qala/core";
 import { CommentService } from "../../application/comment.service";
 import { TaskService } from "../../application/task.service";
 import { NewTask, TaskChanges, TaskFilter } from "../../domain/task";
 
-const id = { id: t.uuid() };
+const params = { id: t.uuid() };
 
-/** /tasks — routes come from the file name and the action names. */
-export const TasksController = controller({ tasks: TaskService, comments: CommentService }, ({ tasks, comments }) => ({
-  index: action({ query: TaskFilter }, ({ query }) => tasks.list(query)),
-  show: action({ params: id }, ({ params }) => tasks.get(params.id)),
-  store: action({ body: NewTask }, async ({ body }) => created(await tasks.create(body))),
-  update: action({ params: id, body: TaskChanges }, ({ params, body }) => tasks.update(params.id, body)),
-  destroy: action({ params: id }, async ({ params }) => {
-    await tasks.remove(params.id);
-    return noContent();
-  }),
-  complete: post("/:id/complete", { params: id }, ({ params }) => tasks.complete(params.id)),
-  comments: get("/:id/comments", { params: id }, ({ params }) => comments.forTask(params.id)),
-}));
+/** /tasks — reads are public, writes need a user (`auth: true`, see app/auth.ts). */
+export class TasksController {
+  constructor(
+    private readonly tasks: TaskService,
+    private readonly threads: CommentService,
+  ) {}
+
+  index = action({ query: TaskFilter }, ({ query }) => this.tasks.list(query));
+  show = action({ params }, ({ id }) => this.tasks.get(id));
+  store = action({ body: NewTask, auth: true }, ({ body }) => this.tasks.create(body));
+  update = action({ params, body: TaskChanges, auth: true }, ({ id, body }) => this.tasks.update(id, body));
+  destroy = action({ params, auth: true }, ({ id }) => this.tasks.remove(id));
+  complete = post("/:id/complete", { params, auth: true }, ({ id }) => this.tasks.complete(id));
+  comments = get("/:id/comments", { params }, ({ id }) => this.threads.forTask(id));
+}

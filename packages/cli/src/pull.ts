@@ -3,6 +3,7 @@ import { isAbsolute, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { loadCore } from "./run";
 import { CliError, LAYOUT, color, kebab, pascal, singular, writeIfChanged } from "./util";
+import { appDatabaseUrl } from "./database-url";
 
 /** One column as read from the catalog. */
 export type PulledColumn = {
@@ -219,18 +220,8 @@ export function renderIndex(models: RenderedModel[]): string {
 
 export type PullOptions = { url?: string; schema?: string; tables?: string; out?: string; force?: boolean };
 
-async function databaseUrl(root: string): Promise<string> {
-  const configFile = join(root, LAYOUT.config);
-  if (!existsSync(configFile)) throw new CliError(`${LAYOUT.config} is missing: add it, or pass --url postgres://...`);
-  const previous = process.cwd();
-  process.chdir(root); // defineConfig reads .env from the working directory
-  try {
-    const { config } = (await import(pathToFileURL(configFile).href)) as { config?: { databaseUrl?: string } };
-    if (config === undefined || typeof config.databaseUrl !== "string") throw new CliError(`${LAYOUT.config} must export \`config\` with a \`databaseUrl\` string`);
-    return config.databaseUrl;
-  } finally {
-    process.chdir(previous);
-  }
+function databaseUrl(root: string): Promise<string> {
+  return appDatabaseUrl(root);
 }
 
 /** `qala db:pull`: generate model files from an existing PostgreSQL database. */

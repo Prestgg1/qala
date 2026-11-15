@@ -233,28 +233,32 @@ describe("make:*", () => {
     expect(makeMigration(root, "create_notes").created).toEqual(["database/migrations/0001_create_notes.sql"]);
     expect(makeMigration(root, "add index").created).toEqual(["database/migrations/0002_add_index.sql"]);
     expect(readFileSync(join(root, "database/migrations/0001_create_notes.sql"), "utf8")).toContain("create table notes");
-    const providers = readFileSync(join(root, "app/providers.ts"), "utf8");
-    expect(providers).toContain("singleton(GreetingService, () => new GreetingService()),");
-    expect(providers).toContain('import { GreetingService } from "./application/greeting.service";');
-    expect(providers).toContain('import { type Provider, singleton } from "@qala/core";');
+    // make:controller --resource writes resource(Model) and the model it needs.
+    expect(readFileSync(join(root, "app/http/controllers/notes.controller.ts"), "utf8")).toContain('export const NotesController = resource(Note, { defaultOrder: ["createdAt", "desc"] });');
+    expect(readFileSync(join(root, "app/domain/note.ts"), "utf8")).toContain("id: t.uuid().primary(),");
+    // Services are no longer registered by hand: app/providers.ts stays untouched, DI is generated.
+    expect(readFileSync(join(root, "app/providers.ts"), "utf8")).not.toContain("GreetingService");
     generate(root);
+    expect(readFileSync(join(root, ".qala/providers.gen.ts"), "utf8")).toContain("singleton<GreetingService>(GreetingService, () => new GreetingService()),");
     expect(typecheck(root)).toBe("");
     expect(checkArchitecture(root).violations).toEqual([]);
     expect(() => makeController(root, "notes", true)).toThrow(/already exists/);
   });
 
   test.skipIf(!coreHasDb)("model → repository → service → resource controller is a working vertical slice", () => {
-    const root = app({ "app/providers.ts": 'import type { Provider } from "@qala/core";\n\nexport const providers: Provider[] = [\n];\n' });
+    const root = app({ ".env.example": "DATABASE_URL=postgres://u:p@localhost:5432/db # type: url\n" });
     makeModel(root, "task");
     makeRepository(root, "task");
     makeService(root, "task");
     makeController(root, "tasks", true);
     const controller = readFileSync(join(root, "app/http/controllers/tasks.controller.ts"), "utf8");
-    expect(controller).toContain("controller({ tasks: TaskService }, ({ tasks }) => ({");
-    const providers = readFileSync(join(root, "app/providers.ts"), "utf8");
-    expect(providers).toContain("singleton(TaskRepository, (c) => new PgTaskRepository(c.get(Database))),");
-    expect(providers).toContain("singleton(TaskService, (c) => new TaskService(c.get(TaskRepository))),");
+    expect(controller).toContain("resource(Task, ");
     generate(root);
+    // Wiring is generated: Database from DATABASE_URL, the repository bound to its only implementation.
+    const providers = readFileSync(join(root, ".qala/providers.gen.ts"), "utf8");
+    expect(providers).toContain("singleton<Database>(Database, () => new Database(env.DATABASE_URL)),");
+    expect(providers).toContain("bind<TaskRepository>(TaskRepository, PgTaskRepository),");
+    expect(providers).toContain("singleton<TaskService>(TaskService, (c) => new TaskService(c.get<TaskRepository>(TaskRepository))),");
     expect(typecheck(root)).toBe("");
     expect(checkArchitecture(root).violations).toEqual([]);
   });
@@ -273,7 +277,13 @@ describe("qala new", () => {
     tsconfig.compilerOptions.typeRoots = [join(REPO, "node_modules/@types")];
     writeFileSync(join(dir, "tsconfig.json"), JSON.stringify(tsconfig));
     const { controllers } = generate(dir);
-    expect(controllers.map((c) => c.name)).toEqual(["health"]);
+    expect(controllers.map((c) => c.name).sort()).toEqual(["health", "notes"]);
+    // The new style: no providers.ts or config/app.ts; typed env, auth types and Database are generated.
+    expect(files).not.toContain("app/providers.ts");
+    expect(existsSync(join(dir, ".qala/env.gen.ts"))).toBe(true);
+    expect(readFileSync(join(dir, ".qala/auth.gen.ts"), "utf8")).toContain("user: AppUser;");
+    expect(readFileSync(join(dir, ".qala/providers.gen.ts"), "utf8")).toContain("new Database(env.DATABASE_URL)");
+    expect(readFileSync(join(dir, ".qala/main.ts"), "utf8")).toContain("serve(app, { port: env.PORT });");
     expect(typecheck(dir)).toBe("");
     expect(checkArchitecture(dir).violations).toEqual([]);
     expect(() => scaffold(dir)).toThrow(/not empty/);

@@ -40,46 +40,52 @@ export function scaffold(dir: string, options: NewOptions = {}): string[] {
           noEmit: true,
           types: ["node", "bun"],
           // scriptc compiles @qala/core as part of the app, so it is mapped to its TypeScript source.
-          paths: { "@qala/core": [core], "@qala/core/query": [core.replace(/index\.ts$/, "orm/builder/index.ts")] },
+          paths: { "@qala/core": [core], "@qala/core/query": [core.replace(/index\.ts$/, "orm/builder/index.ts")], "@qala/core/testing": [core.replace(/index\.ts$/, "testing.ts")] },
         },
         // ".qala" alone would not match: TypeScript skips dot-folders unless the glob names files in them.
-        include: ["app", "config", ".qala/**/*.ts"],
+        include: ["app", "config", "test", ".qala/**/*.ts"],
       },
       null,
       2,
     )}\n`,
     ".gitignore": "node_modules\n.qala\ndist\n.env\n",
-    ".env.example": "PORT=3000\nDATABASE_URL=postgres://postgres:postgres@localhost:5432/app\nLOG_LEVEL=info\n",
-    "config/app.ts": `import { defineConfig } from "@qala/core";
-
-/** Every setting the app reads, typed and validated at startup (from the environment and .env). */
-export const config = defineConfig((env) => ({
-  port: env.number("PORT", 3000),
-  databaseUrl: env.string("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/app"),
-  logLevel: env.oneOf("LOG_LEVEL", ["debug", "info", "warn", "error"] as const, "info"),
-}));
-`,
-    "app/providers.ts": `import type { Provider } from "@qala/core";
-
-/**
- * The composition root: which implementation serves each dependency.
- * \`qala make:service\` and \`qala make:repository\` add their lines here, e.g.
- *   singleton(Database, () => new Database(config.databaseUrl)),
- *   singleton(TaskRepository, (c) => new PgTaskRepository(c.get(Database))),
- */
-export const providers: Provider[] = [
-];
-`,
+    // The typed env (.qala/env.gen.ts) is generated from these lines; DATABASE_URL also provides `Database`.
+    ".env.example": "PORT=3000 # type: number\nDATABASE_URL=postgres://postgres:postgres@localhost:5432/app # type: url\nLOG_LEVEL=info # type: enum(debug,info,warn,error)\nAPI_TOKEN=change-me\n",
     "app/kernel.ts": `import { cors, Logger, requestLogger, securityHeaders, type ErrorHandler, type Middleware } from "@qala/core";
-import { config } from "../config/app";
-
-const logger = new Logger(config.logLevel);
+import { env } from "../.qala/env.gen";
 
 /** Global HTTP pipeline: middleware for every request and the app-wide error handler. */
 export const kernel: { middleware?: Middleware[]; onError?: ErrorHandler; exposeErrors?: boolean } = {
-  middleware: [requestLogger(logger), cors(), securityHeaders()],
-  exposeErrors: config.logLevel === "debug",
+  middleware: [requestLogger(new Logger(env.LOG_LEVEL)), cors(), securityHeaders()],
+  exposeErrors: env.LOG_LEVEL === "debug",
 };
+`,
+    "app/auth.ts": `import type { Context } from "@qala/core";
+import { env } from "../.qala/env.gen";
+
+export type AppUser = { name: string };
+
+/** Who is calling: here a single API token; swap in sessions or JWTs. \`auth: true\` actions get \`user: AppUser\`. */
+export async function authenticate(ctx: Context): Promise<AppUser | null> {
+  return ctx.bearer() === env.API_TOKEN ? { name: "api" } : null;
+}
+`,
+    "app/domain/note.ts": `import { model, t, type InferModel } from "@qala/core";
+
+/** The "notes" table: row type, validation, decoders and migrations come from this one definition. */
+export const Note = model("notes", {
+  id: t.uuid().primary(),
+  title: t.string({ min: 1, max: 200 }),
+  done: t.boolean().default(false),
+  createdAt: t.datetime().now(),
+});
+export type Note = InferModel<typeof Note>;
+`,
+    "app/http/controllers/notes.controller.ts": `import { resource } from "@qala/core";
+import { Note } from "../../domain/note";
+
+/** /notes: paginated, filterable CRUD validated by the model; writes need a user (app/auth.ts). */
+export const NotesController = resource(Note, { filters: ["done"], defaultOrder: ["createdAt", "desc"], auth: true });
 `,
     "app/http/controllers/health.controller.ts": `import { action, controller } from "@qala/core";
 
@@ -87,10 +93,17 @@ export const HealthController = controller({}, () => ({
   index: action({}, () => ({ status: "ok", time: new Date().toISOString() })),
 }));
 `,
-    "app/domain/README.md": "Entities, value objects, domain errors and repository contracts (abstract classes). Imports nothing outside the domain.\n",
-    "app/application/README.md": "Services / use cases. Depend on the domain only; get infrastructure through domain contracts.\n",
+    "database/migrations/0001_create_notes.sql": `create table notes (
+  id uuid primary key default gen_random_uuid(),
+  title text not null,
+  done boolean not null default false,
+  created_at timestamptz not null default now()
+);
+`,
+    "app/domain/README.md": "Models, entities, domain rules and errors, and contracts (abstract classes) for what infrastructure provides. Imports nothing outside the domain.\n",
+    "app/application/README.md": "Services / use cases. Constructor parameters are injected automatically (qala generate); no providers file needed.\n",
     "app/infrastructure/README.md": "Implementations of domain contracts: repositories on Database, mail, queues, HTTP clients.\n",
-    "database/migrations/README.md": "SQL migrations, applied in order by `qala migrate` (create one with `qala make:migration <name>`).\n",
+    "database/migrations/README.md": "SQL migrations, applied in order by `qala migrate`. `qala migrate:make <name>` writes one from the difference between your models and the database.\n",
     "README.md": `# ${name}
 
 A [Qala](https://github.com/Prestgg1/qala) app.
@@ -102,7 +115,8 @@ bun run build        # qala build: architecture check + native binary in dist/ap
 bun run start        # run the native binary
 \`\`\`
 
-Add code with \`qala make:model task\`, \`qala make:repository task\`, \`qala make:service task\`, \`qala make:controller tasks --resource\`.
+Add a CRUD resource in two commands: \`qala make:controller tasks --resource\` (model + controller), then \`qala migrate:make create_tasks && qala migrate\`.
+Services and repositories are injected automatically from their constructor parameter types.
 `,
   };
   const written: string[] = [];

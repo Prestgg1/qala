@@ -1,41 +1,40 @@
-import { NotFoundError } from "@qala/core";
-import { assertCanComplete, cleanTitle, type NewTask, type Task, type TaskChanges, type TaskFilter } from "../domain/task";
-import { TaskRepository } from "../domain/task.repository";
+import type { Database } from "@qala/core";
+import { cleanTitle, Task, TaskErrors, TaskSearch, type NewTask, type TaskChanges, type TaskFilter } from "../domain/task";
 
-/** Task use cases. Knows the domain rules and the repository contract, nothing about HTTP or SQL. */
+/** Task use cases. `null` means "no such task" (the HTTP layer answers 404), `undefined` "done, nothing to send" (204). */
 export class TaskService {
-  constructor(private readonly tasks: TaskRepository) {}
+  constructor(
+    private readonly db: Database,
+    private readonly search: TaskSearch,
+  ) {}
 
-  list(filter: TaskFilter): Promise<Task[]> {
-    return this.tasks.list(filter);
+  private get tasks() {
+    return this.db.table(Task);
   }
 
-  async get(id: string): Promise<Task> {
-    const task = await this.tasks.find(id);
-    if (task === null) throw new NotFoundError(`Task ${id} not found`);
-    return task;
+  list(filter: TaskFilter): Promise<Task[]> {
+    return this.search.find(filter);
+  }
+
+  get(id: string): Promise<Task | null> {
+    return this.tasks.find(id);
   }
 
   create(input: NewTask): Promise<Task> {
-    return this.tasks.create({ title: cleanTitle(input.title), description: input.description, priority: input.priority, dueAt: input.dueAt });
+    return this.tasks.insert({ ...input, title: cleanTitle(input.title) });
   }
 
-  async update(id: string, changes: TaskChanges): Promise<Task> {
-    const title = changes.title === undefined ? undefined : cleanTitle(changes.title);
-    const data: Partial<Task> = { title, description: changes.description, priority: changes.priority, dueAt: changes.dueAt };
-    const task = await this.tasks.update(id, data);
-    if (task === null) throw new NotFoundError(`Task ${id} not found`);
-    return task;
+  update(id: string, changes: TaskChanges): Promise<Task | null> {
+    return this.tasks.update(id, { ...changes, title: changes.title === undefined ? undefined : cleanTitle(changes.title) });
   }
 
-  async complete(id: string): Promise<Task> {
-    assertCanComplete(await this.get(id));
-    const task = await this.tasks.update(id, { done: true });
-    if (task === null) throw new NotFoundError(`Task ${id} not found`);
-    return task;
+  async complete(id: string): Promise<Task | null> {
+    const task = await this.get(id);
+    if (task?.done === true) throw TaskErrors.TaskAlreadyCompleted();
+    return task === null ? null : this.tasks.update(id, { done: true });
   }
 
-  async remove(id: string): Promise<void> {
-    if (!(await this.tasks.delete(id))) throw new NotFoundError(`Task ${id} not found`);
+  async remove(id: string): Promise<null | undefined> {
+    return (await this.tasks.delete(id)) ? undefined : null;
   }
 }

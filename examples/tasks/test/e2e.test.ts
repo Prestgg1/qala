@@ -8,7 +8,7 @@ import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { join } from "node:path";
 import { ApiError } from "@qala/client";
 import { Database } from "@qala/core";
-import { config } from "../config/app";
+import { env } from "../.qala/env.gen";
 import { tasksApi } from "../web/client";
 
 const ROOT = join(import.meta.dir, "..");
@@ -38,16 +38,16 @@ async function waitFor(url: string): Promise<void> {
 
 beforeAll(async () => {
   qala("migrate");
-  const db = new Database(config.databaseUrl);
+  const db = new Database(env.DATABASE_URL);
   await db.execute("truncate tasks cascade");
   db.close();
-  const env = { ...process.env, PORT: String(PORT), API_TOKEN: TOKEN, LOG_REQUESTS: "false" };
+  const childEnv = { ...process.env, PORT: String(PORT), API_TOKEN: TOKEN, LOG_REQUESTS: "false" };
   if (ON_BUN) {
     qala("generate");
-    server = spawn("bun", [".qala/main.ts"], { cwd: ROOT, env, stdio: "inherit" });
+    server = spawn("bun", [".qala/main.ts"], { cwd: ROOT, env: childEnv, stdio: "inherit" });
   } else {
     expect(qala("build")).toContain("dist/app");
-    server = spawn(join(ROOT, "dist/app"), [], { cwd: ROOT, env, stdio: "inherit" });
+    server = spawn(join(ROOT, "dist/app"), [], { cwd: ROOT, env: childEnv, stdio: "inherit" });
   }
   await waitFor(`${BASE}/health`);
 }, 120_000);

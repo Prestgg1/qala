@@ -63,6 +63,7 @@ export function renderApi(root: string, controllers: ControllerInfo[]): string {
     "// `createClient<Api>({ baseUrl, manifest })` from @qala/client. Only types cross over; no server code.",
   ];
   if (controllers.some((c) => c.kind === "class")) lines.push('import type { ClassController } from "@qala/core";');
+  if (hasAppUser(root)) lines.push('import type {} from "./auth.gen";');
   for (const c of controllers) lines.push(importLine(c, dir, true));
   lines.push("", "export type Api = {");
   for (const c of controllers) lines.push(c.kind === "class" ? `  ${c.name}: ClassController<${alias(c)}>;` : `  ${c.name}: typeof ${alias(c)};`);
@@ -84,11 +85,16 @@ export function renderMain(root: string, hasModels = false, hasGeneratedProvider
   // Registers the generated row decoders on the models before anything queries them.
   if (hasModels) lines.push('import "./models.gen";');
   if (hasConfig) lines.push(`import { config } from "${importPath(dir, join(root, LAYOUT.config))}";`);
+  const envExample = join(root, ".env.example");
+  const envPort = !hasConfig && existsSync(envExample) && /^\s*PORT\s*=.*#\s*type:\s*number/m.test(readFileSync(envExample, "utf8"));
+  if (envPort) lines.push('import { env } from "./env.gen";');
   if (hasGeneratedProviders) lines.push('import { generatedProviders } from "./providers.gen";');
   // `export async function authenticate(ctx)` in app/auth.ts resolves the user for `auth: true` / `(auth)` routes.
   const authFile = join(root, "app/auth.ts");
   const hasAuthenticate = existsSync(authFile) && /export\s+(async\s+)?function\s+authenticate\b|export\s+const\s+authenticate\b/.test(readFileSync(authFile, "utf8"));
   if (hasAuthenticate) lines.push(`import { authenticate } from "${importPath(dir, authFile)}";`);
+  // Types `user` as app/auth.ts's AppUser in handlers (declaration merging; no runtime code).
+  if (hasAppUser(root)) lines.push('import "./auth.gen";');
   if (hasProviders) lines.push(`import { providers } from "${importPath(dir, join(root, LAYOUT.providers))}";`);
   // `export const serveOptions` in app/kernel.ts (workers, bodyLimit, host) is passed on to serve().
   const kernelSource = hasKernel ? readFileSync(join(root, LAYOUT.kernel), "utf8") : "";
@@ -110,11 +116,14 @@ export function renderMain(root: string, hasModels = false, hasGeneratedProvider
   if (hasGeneratedProviders) lines.push(hasProviders ? "  providers: [...generatedProviders, ...providers]," : "  providers: generatedProviders,");
   else if (hasProviders) lines.push("  providers,");
   if (hasKernel) lines.push("  middleware: kernel.middleware,", "  onError: kernel.onError,", "  exposeErrors: kernel.exposeErrors,");
+  // `locale: "az"` in the kernel sets the default language of framework messages.
+  if (hasKernel && /\blocale\s*[:,}]/.test(kernelSource)) lines.push("  locale: kernel.locale,");
   if (hasAuthenticate) lines.push("  authenticate,");
   lines.push("});", "");
   // Event handlers and audit/realtime sinks resolve services from the app's container.
   if (bindsEvents) lines.push("bindEvents(app.container);", "");
-  const port = hasConfig ? "config.port" : 'Number(process.env.PORT ?? "3000")';
+  // Port: config/app.ts's `config.port`, else the typed env's PORT (.env.example), else $PORT or 3000.
+  const port = hasConfig ? "config.port" : envPort ? "env.PORT" : 'Number(process.env.PORT ?? "3000")';
   const serveCall = hasServeOptions ? `serve(app, { port: ${port}, ...serveOptions })` : `serve(app, { port: ${port} })`;
   lines.push(hasOnStart ? `${serveCall}.then(() => onStart(app, { primary: !isWorker() }));` : `${serveCall};`, "");
   return lines.join("\n");
@@ -143,10 +152,14 @@ export function generate(root: string): Generated {
   ];
   if (hasModels) files.push(["models.gen.ts", renderModels(root, models)]);
   if (di.source !== null) files.push([PROVIDERS_GEN, di.source]);
+  const authTypes = hasAppUser(root);
+  if (authTypes) files.push([AUTH_GEN, renderAuthTypes(root)]);
   files.push(["main.ts", renderMain(root, hasModels, hasGeneratedProviders)]);
   for (const [name, content] of files) if (writeIfChanged(join(dir, name), content)) written.push(`${LAYOUT.generated}/${name}`);
   const stale = join(dir, "models.gen.ts");
   if (!hasModels && existsSync(stale)) rmSync(stale);
+  const staleAuth = join(dir, AUTH_GEN);
+  if (!authTypes && existsSync(staleAuth)) rmSync(staleAuth);
   const staleProviders = join(dir, PROVIDERS_GEN);
   if (!hasGeneratedProviders && existsSync(staleProviders)) rmSync(staleProviders);
   // Compiled queries (SQL + typed decoders) from app/infrastructure/queries/*.query.ts.
@@ -155,6 +168,32 @@ export function generate(root: string): Generated {
   const queries = generateQueries(root);
   if (queries.written) written.push(`${LAYOUT.generated}/${QUERIES_GEN}`);
   return { controllers, models, skippedModels: skipped, written, queries: queries.count, providers: di.count, diWarnings: di.warnings };
+}
+
+const AUTH_GEN = "auth.gen.ts";
+
+/** Whether app/auth.ts exports an `AppUser` type (then `.qala/auth.gen.ts` types `user` in handlers). */
+export function hasAppUser(root: string): boolean {
+  const file = join(root, "app/auth.ts");
+  return existsSync(file) && /export\s+(type|interface)\s+AppUser\b/.test(readFileSync(file, "utf8"));
+}
+
+/** Declaration merging that types `user` (and `currentUser`/`requireUser`) as the app's `AppUser`. */
+export function renderAuthTypes(root: string): string {
+  const dir = join(root, LAYOUT.generated);
+  return [
+    HEADER,
+    `import type { AppUser } from "${importPath(dir, join(root, "app/auth.ts"))}";`,
+    "",
+    'declare module "@qala/core" {',
+    "  interface AuthTypes {",
+    "    user: AppUser;",
+    "  }",
+    "}",
+    "",
+    "export {};",
+    "",
+  ].join("\n");
 }
 
 /** `app/events/*.ts` (sorted): modules that register model event handlers with `on(...)`. */

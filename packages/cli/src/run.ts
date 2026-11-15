@@ -7,6 +7,7 @@ import { checkArchitecture } from "./check";
 import { generate } from "./codegen";
 import { nativeArgs } from "./native";
 import { CliError, LAYOUT, color, findBin, formatBytes } from "./util";
+import { appDatabaseUrl } from "./database-url";
 
 const CLI_DIR = dirname(new URL(import.meta.url).pathname);
 
@@ -108,15 +109,12 @@ export async function migrateCommand(root: string): Promise<number> {
         .sort()
         .map((name) => ({ name, sql: readFileSync(join(dir, name), "utf8") }))
     : [];
-  const configFile = join(root, LAYOUT.config);
-  if (!existsSync(configFile)) throw new CliError(`${LAYOUT.config} is missing; it must export config with databaseUrl`);
+  const url = await appDatabaseUrl(root);
   const previous = process.cwd();
-  process.chdir(root); // defineConfig reads .env from the working directory
+  process.chdir(root);
   try {
-    const { config } = (await import(pathToFileURL(configFile).href)) as { config?: { databaseUrl?: string } };
-    if (config === undefined || typeof config.databaseUrl !== "string") throw new CliError(`${LAYOUT.config} must export \`config\` with a \`databaseUrl\` string`);
     const core = await loadCore(root);
-    const db = new core.Database(config.databaseUrl);
+    const db = new core.Database(url);
     try {
       const applied = await core.migrate(db, files);
       if (applied.length === 0) console.log(color.dim(`Nothing to migrate (${files.length} migration(s) already applied).`));

@@ -73,8 +73,6 @@ export function makeController(root: string, name: string, resource: boolean, fo
   const file = `${LAYOUT.controllers}/${[...segments, last].join("/")}.controller.ts`;
   const exportName = `${pascal(last)}Controller`;
   const fileDir = join(root, LAYOUT.controllers, ...segments);
-  const servicePath = join(root, LAYOUT.application, `${n.file}.service.ts`);
-  const hasService = existsSync(servicePath);
   const modelPath = join(root, LAYOUT.domain, `${n.file}.ts`);
   const hasModel = existsSync(modelPath);
   let content: string;
@@ -85,47 +83,19 @@ export const ${exportName} = controller({}, () => ({
   hello: get("/hello", {}, () => ({ message: "Hello from ${last}" })),
 }));
 `;
-  } else if (hasService) {
-    const service = `${n.Entity}Service`;
-    const body = hasModel ? `${n.Entity}Input` : "";
-    const imports = [`import { action, controller, created, noContent, t } from "@qala/core";`, `import { ${service} } from "${importPath(fileDir, servicePath)}";`];
-    if (hasModel) imports.push(`import { ${body} } from "${importPath(fileDir, modelPath)}";`);
-    content = `${imports.join("\n")}
-
-const id = { id: t.uuid() };
-
-export const ${exportName} = controller({ ${n.entities}: ${service} }, ({ ${n.entities} }) => ({
-  index: action({}, () => ${n.entities}.list()),
-  show: action({ params: id }, ({ params }) => ${n.entities}.get(params.id)),
-  store: action({ body: ${hasModel ? body : "t.object({ name: t.string({ min: 1 }) })"} }, async ({ body }) => created(await ${n.entities}.create(body))),
-  update: action({ params: id, body: ${hasModel ? body : "t.object({ name: t.string({ min: 1 }) })"} }, ({ params, body }) => ${n.entities}.update(params.id, body)),
-  destroy: action({ params: id }, async ({ params }) => {
-    await ${n.entities}.remove(params.id);
-    return noContent();
-  }),
-}));
-`;
   } else {
-    content = `import { action, controller, created, noContent, NotFoundError, t } from "@qala/core";
+    // A resource: paginated, filterable CRUD validated by the model (docs/guide/resources.md).
+    if (!hasModel) makeModel(root, last, force);
+    content = `import { resource } from "@qala/core";
+import { ${n.Entity} } from "${importPath(fileDir, modelPath)}";
 
-const id = { id: t.uuid() };
-const ${n.Entity}Body = t.object({ name: t.string({ min: 1, max: 200 }) });
-
-// TODO: inject an application service, e.g. controller({ ${n.entities}: ${n.Entity}Service }, ({ ${n.entities} }) => ...)
-export const ${exportName} = controller({}, () => ({
-  index: action({}, () => []),
-  show: action({ params: id }, ({ params }) => {
-    throw new NotFoundError(\`${n.Entity} \${params.id} not found\`);
-  }),
-  store: action({ body: ${n.Entity}Body }, ({ body }) => created(body)),
-  update: action({ params: id, body: ${n.Entity}Body }, ({ body }) => body),
-  destroy: action({ params: id }, () => noContent()),
-}));
+/** /${path}: index (paginated) · show · store (201) · update · destroy (204), validated by ${n.Entity}. */
+export const ${exportName} = resource(${n.Entity}, { defaultOrder: ["createdAt", "desc"] });
 `;
   }
   createFile(root, file, content, force);
   const notes = [`routes are registered automatically under /${path} (run qala routes)`];
-  if (resource && !hasService) notes.push(`no ${LAYOUT.application}/${n.file}.service.ts yet: qala make:service ${n.file} generates one, then rerun with --force`);
+  if (resource && !hasModel) notes.push(`created the model ${LAYOUT.domain}/${n.file}.ts; create its table with: qala migrate:make create_${n.table}`);
   return { created: [file], notes };
 }
 
@@ -135,25 +105,23 @@ export function makeModel(root: string, name: string, force = false): MakeResult
   createFile(
     root,
     file,
-    `import { model, t, type InferModel } from "@qala/core";
+    `import { model, t, type InferCreate, type InferModel } from "@qala/core";
 
-/** A ${n.entity} as stored in the "${n.table}" table (camelCase fields ↔ snake_case columns). */
+/** The "${n.table}" table: row type, validation, decoders and migrations all come from here. */
 export const ${n.Entity} = model("${n.table}", {
-  id: t.uuid(),
+  id: t.uuid().primary(),
   name: t.string({ min: 1, max: 200 }),
-  createdAt: t.datetime(),
+  createdAt: t.datetime().now(),
 });
 export type ${n.Entity} = InferModel<typeof ${n.Entity}>;
 
-/** What a client may send to create or change a ${n.entity}. */
-export const ${n.Entity}Input = t.object({
-  name: t.string({ min: 1, max: 200 }),
-});
-export type ${n.Entity}Input = Infer<typeof ${n.Entity}Input>;
-`.replace('import { model, t, type InferModel } from "@qala/core";', 'import { model, t, type Infer, type InferModel } from "@qala/core";'),
+/** What a client may send to create a ${n.entity} (fields with defaults are optional). */
+export const ${n.Entity}Input = ${n.Entity}.createSchema;
+export type ${n.Entity}Input = InferCreate<typeof ${n.Entity}>;
+`,
     force,
   );
-  return { created: [file], notes: [`create the table with: qala make:migration create_${n.table}`] };
+  return { created: [file], notes: [`create the table with: qala migrate:make create_${n.table}`] };
 }
 
 export function makeRepository(root: string, name: string, force = false): MakeResult {
@@ -224,13 +192,7 @@ export class Pg${n.Entity}Repository extends ${n.Entity}Repository {
       force,
     ),
   );
-  notes.push(
-    registerProvider(root, `singleton(${n.Entity}Repository, (c) => new Pg${n.Entity}Repository(c.get(Database))),`, [
-      { names: "Database", from: "@qala/core" },
-      { names: `${n.Entity}Repository`, from: `./domain/${n.file}.repository` },
-      { names: `Pg${n.Entity}Repository`, from: `./infrastructure/pg-${n.file}.repository` },
-    ]),
-  );
+  notes.push(`wired automatically: qala generate binds ${n.Entity}Repository to Pg${n.Entity}Repository`);
   return { created, notes };
 }
 
@@ -240,11 +202,10 @@ export function makeService(root: string, name: string, force = false): MakeResu
   const hasRepo = existsSync(join(root, LAYOUT.domain, `${n.file}.repository.ts`));
   const service = `${n.Entity}Service`;
   const content = hasRepo
-    ? `import { NotFoundError } from "@qala/core";
-import type { ${n.Entity}, ${n.Entity}Input } from "../domain/${n.file}";
+    ? `import type { ${n.Entity}, ${n.Entity}Input } from "../domain/${n.file}";
 import { ${n.Entity}Repository } from "../domain/${n.file}.repository";
 
-/** Use cases for ${n.entities}. */
+/** Use cases for ${n.entities}. \`null\` means "not found" (404); \`undefined\` "done, nothing to send" (204). */
 export class ${service} {
   constructor(private readonly ${n.entities}: ${n.Entity}Repository) {}
 
@@ -252,24 +213,20 @@ export class ${service} {
     return this.${n.entities}.all();
   }
 
-  async get(id: string): Promise<${n.Entity}> {
-    const found = await this.${n.entities}.find(id);
-    if (found === null) throw new NotFoundError(\`${n.Entity} \${id} not found\`);
-    return found;
+  get(id: string): Promise<${n.Entity} | null> {
+    return this.${n.entities}.find(id);
   }
 
   create(input: ${n.Entity}Input): Promise<${n.Entity}> {
     return this.${n.entities}.create(input);
   }
 
-  async update(id: string, input: ${n.Entity}Input): Promise<${n.Entity}> {
-    const updated = await this.${n.entities}.update(id, input);
-    if (updated === null) throw new NotFoundError(\`${n.Entity} \${id} not found\`);
-    return updated;
+  update(id: string, input: ${n.Entity}Input): Promise<${n.Entity} | null> {
+    return this.${n.entities}.update(id, input);
   }
 
-  async remove(id: string): Promise<void> {
-    if (!(await this.${n.entities}.delete(id))) throw new NotFoundError(\`${n.Entity} \${id} not found\`);
+  async remove(id: string): Promise<null | undefined> {
+    return (await this.${n.entities}.delete(id)) ? undefined : null;
   }
 }
 `
@@ -281,13 +238,7 @@ export class ${service} {
 }
 `;
   createFile(root, file, content, force);
-  const note = hasRepo
-    ? registerProvider(root, `singleton(${service}, (c) => new ${service}(c.get(${n.Entity}Repository))),`, [
-        { names: service, from: `./application/${n.file}.service` },
-        { names: `${n.Entity}Repository`, from: `./domain/${n.file}.repository` },
-      ])
-    : registerProvider(root, `singleton(${service}, () => new ${service}()),`, [{ names: service, from: `./application/${n.file}.service` }]);
-  return { created: [file], notes: [note] };
+  return { created: [file], notes: ["wired automatically: qala generate injects it wherever a constructor asks for it"] };
 }
 
 export function makeMiddleware(root: string, name: string, force = false): MakeResult {
