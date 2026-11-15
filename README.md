@@ -325,6 +325,12 @@ Why it is fast: `qala generate` writes a typed row decoder for every model (`.qa
 
 Qala is young (0.1). scriptc itself is experimental. The PostgreSQL client covers what the framework needs (no TLS yet, text protocol, common types). Feedback and pull requests are welcome.
 
+## Documentation
+
+Full guide: https://prestgg1.github.io/qala/. For language models and coding agents:
+[llms.txt](https://prestgg1.github.io/qala/llms.txt) (index) and
+[llms-full.txt](https://prestgg1.github.io/qala/llms-full.txt) (everything in one file).
+
 ## License
 
 MIT

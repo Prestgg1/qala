@@ -18,7 +18,8 @@
     "@types/node": "^24.0.0",
     "scriptc": "0.4.13",
     "typescript": "^5.9.0",
-    "vitepress": "1.6.4"
+    "vitepress": "1.6.4",
+    "vitepress-plugin-llms": "1.15.0"
   },
   "trustedDependencies": [
     "scriptc"

@@ -1,4 +1,5 @@
 import { defineConfig } from "vitepress";
+import llmstxt from "vitepress-plugin-llms";
 
 const repo = "https://github.com/Prestgg1/qala";
 
@@ -9,6 +10,8 @@ export default defineConfig({
   cleanUrls: true,
   lastUpdated: true,
   srcExclude: ["orm.md"],
+  // Writes /llms.txt (page index) and /llms-full.txt (all docs in one file) at build time, plus a .md copy of every page.
+  vite: { plugins: [llmstxt({ domain: "https://prestgg1.github.io" })] },
   head: [["link", { rel: "icon", type: "image/svg+xml", href: "/qala/logo.svg" }]],
   themeConfig: {
     logo: "/logo.svg",

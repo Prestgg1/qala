@@ -25,4 +25,10 @@ qala build && qala start       # native binary
 
 Next: [Project layout](./project-layout), then [Controllers](./controllers).
 
+## For LLMs and coding agents
 
+The docs are also published as plain text for language models:
+
+- [`/llms.txt`](https://prestgg1.github.io/qala/llms.txt): an index of every page with links.
+- [`/llms-full.txt`](https://prestgg1.github.io/qala/llms-full.txt): the whole documentation in one file, ready to paste into a prompt.
+- Any page as Markdown: add `.md` to its URL, e.g. [`/guide/resources.md`](https://prestgg1.github.io/qala/guide/resources.md).
