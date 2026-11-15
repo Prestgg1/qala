@@ -59,7 +59,7 @@ export function action<const I extends InputSchemas, R>(input: I, handler: (inpu
   return make("", "", input, handler);
 }
 
-type PathParams<Path extends string> = Path extends `${string}:${infer P}/${infer Rest}` ? { [K in P]: string } & PathParams<`/${Rest}`> : Path extends `${string}:${infer P}` ? { [K in P]: string } : Record<string, never>;
+type PathParams<Path extends string> = Path extends `${string}:${infer P}/${infer Rest}` ? { [K in P]: string } & PathParams<`/${Rest}`> : Path extends `${string}:${infer P}` ? { [K in P]: string } : {};
 
 type Verb<Path extends string, I, R> = Action<ParamsOf<I, PathParams<Path>>, QueryOf<I>, BodyOf<I>, R>;
 type VerbHandler<Path extends string, I, R> = (input: Input<I, PathParams<Path>>) => R;

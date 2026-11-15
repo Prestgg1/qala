@@ -1,0 +1,31 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "types": [
+      "node",
+      "bun"
+    ],
+    "paths": {
+      "@qala/core": [
+        "../../packages/core/src/index.ts"
+      ],
+      "@qala/client": [
+        "../../packages/client/src/index.ts"
+      ]
+    }
+  },
+  "include": [
+    "app",
+    "config",
+    ".qala",
+    "web",
+    "test",
+    "bench"
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "name": "@qala/cli",
+  "version": "0.1.0",
+  "description": "The Qala builder: route generation, Clean Architecture checks, scaffolding and native builds with scriptc",
+  "type": "module",
+  "license": "MIT",
+  "bin": { "qala": "./src/bin.ts" },
+  "files": ["src"],
+  "peerDependencies": { "typescript": ">=5.4" }
+}

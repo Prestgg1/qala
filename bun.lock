@@ -11,6 +11,30 @@
         "typescript": "^5.9.0",
       },
     },
+    "examples/tasks": {
+      "name": "tasks",
+      "dependencies": {
+        "@qala/client": "workspace:*",
+        "@qala/core": "workspace:*",
+      },
+      "devDependencies": {
+        "@qala/cli": "workspace:*",
+        "@types/bun": "^1.3.0",
+        "@types/node": "^24.0.0",
+        "scriptc": "0.4.13",
+        "typescript": "^5.9.0",
+      },
+    },
+    "packages/cli": {
+      "name": "@qala/cli",
+      "version": "0.1.0",
+      "bin": {
+        "qala": "./src/bin.ts",
+      },
+      "peerDependencies": {
+        "typescript": ">=5.4",
+      },
+    },
     "packages/client": {
       "name": "@qala/client",
       "version": "0.1.0",
@@ -24,6 +48,8 @@
     "scriptc",
   ],
   "packages": {
+    "@qala/cli": ["@qala/cli@workspace:packages/cli"],
+
     "@qala/client": ["@qala/client@workspace:packages/client"],
 
     "@qala/core": ["@qala/core@workspace:packages/core"],
@@ -77,6 +103,8 @@
     "bun-types": ["bun-types@1.4.4", "", { "dependencies": { "@types/node": "*", "undici-types": "*" } }, "sha512-yjrJh5oGX7mMPKGd19YXyIjmEuj4G4zNC30bs7PM9Az7NQ3ndF3j6hbeRdvJTRQEhJ/FYQwW0a2moweEi2hMxQ=="],
 
     "scriptc": ["scriptc@0.4.13", "", { "optionalDependencies": { "@scriptc/cli-darwin-arm64": "0.4.13", "@scriptc/cli-darwin-x64": "0.4.13", "@scriptc/cli-linux-arm64-gnu": "0.4.13", "@scriptc/cli-linux-arm64-musl": "0.4.13", "@scriptc/cli-linux-x64-gnu": "0.4.13", "@scriptc/cli-linux-x64-musl": "0.4.13", "@scriptc/cli-win32-x64-msvc": "0.4.13" }, "bin": { "scriptc": "bin/scriptc.exe" } }, "sha512-TinaBVyZDJNlAGx4/NQFRywFRKoyrwrbna9zgiQwZPrVc3Hc2nBIx80g34yiJ/11/yqjRzpAuNbbg6MXYCDR6A=="],
+
+    "tasks": ["tasks@workspace:examples/tasks"],
 
     "typescript": ["typescript@5.9.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw=="],
 
