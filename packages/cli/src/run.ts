@@ -5,6 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { checkArchitecture } from "./check";
 import { generate } from "./codegen";
+import { nativeArgs } from "./native";
 import { CliError, LAYOUT, color, findBin, formatBytes } from "./util";
 
 const CLI_DIR = dirname(new URL(import.meta.url).pathname);
@@ -57,6 +58,7 @@ export function build(root: string, options: BuildOptions): number {
   mkdirSync(dirname(out), { recursive: true });
   const args = ["build", join(LAYOUT.generated, "main.ts"), "--node-islands=off", "-o", out];
   if (options.optimization !== undefined) args.push("--optimization", options.optimization);
+  args.push(...nativeArgs(root));
   console.log(color.dim(`$ scriptc ${args.join(" ")}`));
   const started = Date.now();
   const result = spawnSync(scriptc, args, { cwd: root, stdio: "inherit" });

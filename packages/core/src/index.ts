@@ -32,3 +32,5 @@ export { stream, sse, StreamReply, StreamSink, StreamWriter, SseWriter, type Sse
 // websocket
 export { ws, WsSocket, WsHandlers, WsSender, WsConnection, WsTransport, encodeFrame, acceptKey, type WsRoute } from "./http/websocket";
 export { Upgrade } from "./http/app";
+// password
+export { hashPassword, verifyPassword, type PasswordOptions } from "./crypto/password";
