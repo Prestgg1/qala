@@ -4,7 +4,7 @@ import type { App } from "./app";
 import { RequestData } from "./context";
 import { json, type Reply } from "./reply";
 import { isWorker, resolveWorkers, startWorkers, watchParent } from "./cluster";
-import { bunStreamBody, CloseSignal, StreamReply, writeNodeStream } from "./stream";
+import { bunStreamBody, StreamReply, writeNodeStream } from "./stream";
 import { BunSocketState, bunWebSocketHandlers, nodeUpgrade, type BunSocket } from "./websocket";
 
 /**
@@ -91,8 +91,6 @@ export function serve(app: App, options: ServeOptions = {}): Promise<void> {
     });
   }
   const server = createServer((req, res) => {
-    const closed = new CloseSignal();
-    req.socket.on("close", () => closed.fire());
     const chunks: Buffer[] = [];
     let size = 0;
     let rejected = false;
@@ -111,7 +109,7 @@ export function serve(app: App, options: ServeOptions = {}): Promise<void> {
       if (rejected) return;
       const body: Uint8Array = chunks.length === 0 ? new Uint8Array(0) : Buffer.concat(chunks);
       app.handle(toRequest(req, body)).then(
-        (reply) => write(res, reply, closed),
+        (reply) => write(res, reply, req.socket),
         () => write(res, json({ error: { status: 500, code: "internal_error", message: "Internal server error", details: null } }, 500)),
       );
     });
@@ -141,9 +139,15 @@ function toRequest(req: IncomingMessage, body: Uint8Array): RequestData {
   return new RequestData(req.method ?? "GET", req.url ?? "/", headers, "", req.socket.remoteAddress ?? "", body);
 }
 
-function write(res: ServerResponse, reply: Reply, closed: CloseSignal | null = null): void {
+/**
+ * Sends a reply. Only streamed replies listen for the connection closing: a keep-alive socket serves many
+ * requests, so a per-request socket listener would pile up (and keep every request's closure alive) until
+ * the client disconnects.
+ */
+function write(res: ServerResponse, reply: Reply, socket: Socket | null = null): void {
   if (reply instanceof StreamReply) {
-    writeNodeStream(res, closed ?? new CloseSignal(), reply, reply.cookies.length === 0 ? reply.headers : withCookies(reply));
+    const sink = writeNodeStream(res, reply, reply.cookies.length === 0 ? reply.headers : withCookies(reply));
+    if (socket !== null) socket.on("close", () => sink.disconnected());
     return;
   }
   if (reply.cookies.length === 0) res.writeHead(reply.status, reply.headers);

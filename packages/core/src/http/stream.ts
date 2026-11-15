@@ -126,7 +126,7 @@ export function sse(ctx: Context, start: (events: SseWriter) => void, options: {
 }
 
 /** Node:http path: sends the headers, then lets the handler write; a client disconnect closes the sink. */
-export function writeNodeStream(res: ServerResponse, socket: NodeStreamSocket, reply: StreamReply, headers: Record<string, string | string[]>): void {
+export function writeNodeStream(res: ServerResponse, reply: StreamReply, headers: Record<string, string | string[]>): StreamSink {
   res.writeHead(reply.status, headers);
   const sink = new StreamSink(
     new StreamWriter(
@@ -136,36 +136,11 @@ export function writeNodeStream(res: ServerResponse, socket: NodeStreamSocket, r
       () => res.end(),
     ),
   );
-  // Node and scriptc report a gone client on the response, Bun only on the socket: listen to both.
+  // Node and scriptc report a gone client on the response; the server also wires the socket (see server.ts).
   res.on("close", () => sink.disconnected());
-  socket.on("close", () => sink.disconnected());
   reply.start(sink);
+  return sink;
 }
-
-/** The connection under a streamed response. */
-export type NodeStreamSocket = { on(event: "close", listener: () => void): unknown };
-
-/**
- * Remembers that a connection closed. Bun's node:http only reports a disconnect to listeners attached while the
- * request handler runs synchronously, so the server attaches one up front and hands this to the stream later.
- */
-export class CloseSignal {
-  private readonly callbacks: (() => void)[] = [];
-  private fired = false;
-
-  on(_event: "close", listener: () => void): void {
-    if (this.fired) listener();
-    else this.callbacks.push(listener);
-  }
-
-  fire(): void {
-    if (this.fired) return;
-    this.fired = true;
-    const all = this.callbacks.splice(0, this.callbacks.length);
-    for (const cb of all) cb();
-  }
-}
-
 
 /** Bun.serve path: the stream as a `ReadableStream` body; cancelling it (client gone) closes the sink. */
 export function bunStreamBody(reply: StreamReply): ReadableStream<Uint8Array> {
