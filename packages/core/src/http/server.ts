@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import type { Socket } from "node:net";
 import type { App } from "./app";
 import { RequestData } from "./context";
 import { json, type Reply } from "./reply";
@@ -115,7 +116,8 @@ export function serve(app: App, options: ServeOptions = {}): Promise<void> {
       );
     });
   });
-  server.on("upgrade", (req, socket, head) => {
+  // scriptc needs the exact (IncomingMessage, Socket, Buffer) listener signature.
+  server.on("upgrade", (req: IncomingMessage, socket: Socket, head: Buffer) => {
     nodeUpgrade(app, toRequest(req, new Uint8Array(0)), socket, head).catch(() => socket.destroy());
   });
   return new Promise<void>((resolve) => {

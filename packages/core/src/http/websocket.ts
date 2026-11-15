@@ -1,3 +1,4 @@
+import type { Socket } from "node:net";
 /**
  * WebSockets (RFC 6455). The handshake and framing are implemented here, over a raw socket, so the same code
  * runs in a scriptc native binary and on Node; under Bun the server uses Bun's own WebSocket support with the
@@ -319,7 +320,7 @@ export type NodeSocket = {
 };
 
 /** Node:http `upgrade` path: run the app's checks, then complete the handshake and frame the connection here. */
-export async function nodeUpgrade(app: App, request: RequestData, socket: NodeSocket, head: Buffer): Promise<void> {
+export async function nodeUpgrade(app: App, request: RequestData, socket: Socket, head: Buffer): Promise<void> {
   const key = request.headers["sec-websocket-key"];
   const version = request.headers["sec-websocket-version"];
   const upgradeHeader = (request.headers["upgrade"] ?? "").toLowerCase();
