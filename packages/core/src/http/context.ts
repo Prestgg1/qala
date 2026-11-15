@@ -1,3 +1,5 @@
+import type { Container, Token } from "../container";
+
 /** One incoming request as the framework sees it (independent of the HTTP server underneath). */
 export class RequestData {
   constructor(
@@ -27,7 +29,15 @@ export class Context {
   constructor(
     readonly request: RequestData,
     readonly path: string,
+    /** The app's DI container (null for a context built outside an app). */
+    readonly container: Container | null = null,
   ) {}
+
+  /** A service from the app's container, for middleware: `ctx.service(AuthService)`. */
+  service<T>(token: Token<T>): T {
+    if (this.container === null) throw new Error("This context has no container");
+    return this.container.get(token);
+  }
 
   get method(): string {
     return this.request.method;

@@ -1,4 +1,4 @@
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { type ModelInfo, renderModels, scanModels, type SkippedModel } from "./models";
 import { generateQueries, QUERIES_GEN } from "./queries";
@@ -59,14 +59,17 @@ export function renderMain(root: string, hasModels = false): string {
   if (hasModels) lines.push('import "./models.gen";');
   if (hasConfig) lines.push(`import { config } from "${importPath(dir, join(root, LAYOUT.config))}";`);
   if (hasProviders) lines.push(`import { providers } from "${importPath(dir, join(root, LAYOUT.providers))}";`);
-  if (hasKernel) lines.push(`import { kernel } from "${importPath(dir, join(root, LAYOUT.kernel))}";`);
+  // `export const serveOptions` in app/kernel.ts (workers, bodyLimit, host) is passed on to serve().
+  const hasServeOptions = hasKernel && /export\s+const\s+serveOptions\b/.test(readFileSync(join(root, LAYOUT.kernel), "utf8"));
+  if (hasKernel) lines.push(`import { kernel${hasServeOptions ? ", serveOptions" : ""} } from "${importPath(dir, join(root, LAYOUT.kernel))}";`);
   lines.push('import { controllers } from "./routes.gen";', "");
   lines.push("const app = createApp({");
   lines.push("  controllers,");
   if (hasProviders) lines.push("  providers,");
   if (hasKernel) lines.push("  middleware: kernel.middleware,", "  onError: kernel.onError,", "  exposeErrors: kernel.exposeErrors,");
   lines.push("});", "");
-  lines.push(hasConfig ? "serve(app, { port: config.port });" : 'serve(app, { port: Number(process.env.PORT ?? "3000") });', "");
+  const port = hasConfig ? "config.port" : 'Number(process.env.PORT ?? "3000")';
+  lines.push(hasServeOptions ? `serve(app, { port: ${port}, ...serveOptions });` : `serve(app, { port: ${port} });`, "");
   return lines.join("\n");
 }
 

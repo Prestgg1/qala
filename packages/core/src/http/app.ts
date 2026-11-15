@@ -107,7 +107,7 @@ export class App {
   /** Handles one request; never throws. */
   async handle(request: RequestData): Promise<Reply> {
     const { path, query } = splitUrl(request.url);
-    const ctx = new Context(request, path);
+    const ctx = new Context(request, path, this.container);
     ctx.query = query;
     let reply: Reply;
     try {
