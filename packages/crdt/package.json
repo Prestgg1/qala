@@ -1,0 +1,20 @@
+{
+  "name": "@qala/crdt",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "description": "A partial, wire-compatible port of Yjs (v1 updates), y-protocols sync/awareness and the y-prosemirror mapping, written for scriptc's static subset",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "devDependencies": {
+    "yjs": "13.6.33",
+    "y-protocols": "1.0.7",
+    "lib0": "0.2.119"
+  }
+}

@@ -1,0 +1,12 @@
+@qala/crdt is a partial port of the following MIT-licensed projects by Kevin Jahns and contributors:
+
+- Yjs (https://github.com/yjs/yjs) — the CRDT: struct store, YATA integration, update encoding v1, Y.Map,
+  Y.XmlFragment, Y.XmlElement, Y.XmlText/Y.Text formatting
+- y-protocols (https://github.com/yjs/y-protocols) — sync and awareness protocols
+- lib0 (https://github.com/dmonad/lib0) — binary encoding (varint, varString, any)
+- y-prosemirror (https://github.com/yjs/y-prosemirror) — the ProseMirror JSON <-> Y.XmlFragment mapping
+
+It is not a complete Yjs: no Y.Array/Y.Text root API beyond what XML text needs, no update v2, no
+snapshots, no undo manager, no subdocuments, no relative positions. Updates it produces and consumes are
+byte-compatible with Yjs 13.6 (v1 encoding). The code was rewritten for scriptc's static TypeScript subset
+(no `any`, non-generic classes).
