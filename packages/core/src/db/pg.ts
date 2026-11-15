@@ -80,12 +80,24 @@ class Column {
 
 class Pending {
   rows: DbRow[] = [];
+  /** Text values per column, in select-list order (raw mode). */
+  rawRows: (string | null)[][] = [];
   columns: Column[] = [];
   error: DatabaseError | null = null;
   affected = 0;
   constructor(
+    readonly raw: boolean,
     readonly resolve: (result: QueryResult) => void,
+    readonly resolveRaw: (result: RawResult) => void,
     readonly reject: (err: Error) => void,
+  ) {}
+}
+
+/** Rows as text values per column (`null` for SQL NULL), in select-list order: no type decoding, no records. */
+export class RawResult {
+  constructor(
+    readonly rows: (string | null)[][],
+    readonly affected: number,
   ) {}
 }
 
@@ -128,7 +140,7 @@ export class Connection {
     });
     this.socket = connect(config.port, config.host);
     this.socket.on("connect", () => {
-      const params = Buffer.concat([cstr("user"), cstr(config.user), cstr("database"), cstr(config.database), cstr("client_encoding"), cstr("UTF8"), Buffer.from([0])]);
+      const params = Buffer.concat([cstr("user"), cstr(config.user), cstr("database"), cstr(config.database), cstr("client_encoding"), cstr("UTF8"), cstr("TimeZone"), cstr("UTC"), Buffer.from([0])]);
       const body = Buffer.concat([int32(196608), params]);
       this.socket.write(Buffer.concat([int32(body.length + 4), body]));
     });
@@ -151,24 +163,37 @@ export class Connection {
   query(text: string, params: DbValue[]): Promise<QueryResult> {
     if (this.closed) return Promise.reject(new Error("Database connection closed"));
     return new Promise<QueryResult>((resolve, reject) => {
-      this.queue.push(new Pending(resolve, reject));
-      const bind: Buffer[] = [cstr(""), cstr(""), int16(0), int16(params.length)];
-      for (const p of params) {
-        const v = encode(p);
-        if (v === null) bind.push(int32(-1));
-        else bind.push(int32(v.length), v);
-      }
-      bind.push(int16(0));
-      this.socket.write(
-        Buffer.concat([
-          message("P", Buffer.concat([cstr(""), cstr(text), int16(0)])),
-          message("B", Buffer.concat(bind)),
-          message("D", Buffer.concat([Buffer.from("P", "latin1"), cstr("")])),
-          message("E", Buffer.concat([cstr(""), int32(0)])),
-          message("S", Buffer.alloc(0)),
-        ]),
-      );
+      this.queue.push(new Pending(false, resolve, () => {}, reject));
+      this.send(text, params);
     });
+  }
+
+  /** Like `query`, but rows come back as text values per column (see `RawResult`). */
+  queryRaw(text: string, params: DbValue[]): Promise<RawResult> {
+    if (this.closed) return Promise.reject(new Error("Database connection closed"));
+    return new Promise<RawResult>((resolve, reject) => {
+      this.queue.push(new Pending(true, () => {}, resolve, reject));
+      this.send(text, params);
+    });
+  }
+
+  private send(text: string, params: DbValue[]): void {
+    const bind: Buffer[] = [cstr(""), cstr(""), int16(0), int16(params.length)];
+    for (const p of params) {
+      const v = encode(p);
+      if (v === null) bind.push(int32(-1));
+      else bind.push(int32(v.length), v);
+    }
+    bind.push(int16(0));
+    this.socket.write(
+      Buffer.concat([
+        message("P", Buffer.concat([cstr(""), cstr(text), int16(0)])),
+        message("B", Buffer.concat(bind)),
+        message("D", Buffer.concat([Buffer.from("P", "latin1"), cstr("")])),
+        message("E", Buffer.concat([cstr(""), int32(0)])),
+        message("S", Buffer.alloc(0)),
+      ]),
+    );
   }
 
   private fail(err: Error): void {
@@ -209,6 +234,21 @@ export class Connection {
       const current = this.queue[0]!;
       const count = body.readInt16BE(0);
       let at = 2;
+      if (current.raw) {
+        const values: (string | null)[] = [];
+        for (let i = 0; i < count; i++) {
+          const len = body.readInt32BE(at);
+          at += 4;
+          if (len === -1) {
+            values.push(null);
+          } else {
+            values.push(body.toString("utf8", at, at + len));
+            at += len;
+          }
+        }
+        current.rawRows.push(values);
+        return;
+      }
       const row: DbRow = {};
       for (let i = 0; i < count; i++) {
         const len = body.readInt32BE(at);
@@ -249,6 +289,7 @@ export class Connection {
       const done = this.queue.shift();
       if (done === undefined) return;
       if (done.error !== null) done.reject(done.error);
+      else if (done.raw) done.resolveRaw(new RawResult(done.rawRows, done.affected));
       else done.resolve(new QueryResult(done.rows, done.affected));
     }
   }
@@ -337,6 +378,15 @@ export class Pool {
     const c = await this.acquire();
     try {
       return await c.query(text, params);
+    } finally {
+      this.release(c);
+    }
+  }
+
+  async queryRaw(text: string, params: DbValue[]): Promise<RawResult> {
+    const c = await this.acquire();
+    try {
+      return await c.queryRaw(text, params);
     } finally {
       this.release(c);
     }

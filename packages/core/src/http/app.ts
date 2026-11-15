@@ -143,10 +143,7 @@ export class App {
     if (def.params !== null) input.params = check(def.params, ctx.params, true, "route parameters");
     if (def.query !== null) input.query = check(def.query, ctx.query, true, "query");
     if (def.body !== null) input.body = check(def.body, readBody(ctx), false, "body");
-    const result = await def.handler(input);
-    if (result instanceof Reply) return result;
-    if (result === undefined) return new Reply(204, "", {});
-    return json(result);
+    return def.handler(input);
   }
 
   private async errorReply(error: unknown, ctx: Context): Promise<Reply> {

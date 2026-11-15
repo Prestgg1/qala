@@ -32,7 +32,7 @@ $ ldd dist/app
 
 ## Why
 
-- **Native and small.** The whole app — HTTP server, router, validation, the PostgreSQL driver — is plain TypeScript inside scriptc's static subset, so it compiles to one ~3 MB machine-code binary. Idle memory is ~5 MB instead of ~55 MB, startup is ~10 ms instead of ~100 ms. The same code also runs on Bun for development. (Throughput is mixed today — see [Performance](#performance).)
+- **Native and small.** The whole app — HTTP server, router, validation, the PostgreSQL driver — is plain TypeScript inside scriptc's static subset, so it compiles to one ~3 MB machine-code binary. Idle memory is ~5 MB instead of ~55 MB, startup is ~7 ms instead of ~170 ms, and it outperforms the same code on Bun in every measured scenario — see [Performance](#performance). The same code also runs on Bun for development.
 - **Organised by default.** Folders are layers and the builder enforces the dependency rule (`qala check`): domain depends on nothing, HTTP never reaches into infrastructure. Your codebase stays readable as it grows.
 - **Short code.** A route is one line. Validation, status codes, error responses and wiring are conventions, not boilerplate.
 - **Types end to end.** The request schemas and the handler's return type flow to the frontend client. Rename a field on the server and the frontend fails to compile.
@@ -45,7 +45,7 @@ $ ldd dist/app
 | Validation | `t.string/number/integer/boolean/uuid/email/datetime/enum/array/object/optional/nullable`, every issue reported at once (422), query strings coerced |
 | Errors | One global handler: `HttpError` family (`NotFoundError`, `ConflictError`, …) → status codes, `DomainError` → 422, unknown → 500 + log; optional `onError` hook |
 | Dependency injection | Class tokens like .NET (`singleton(TaskRepository, c => new PgTaskRepository(c.get(Database)))`), abstract classes as interfaces |
-| Models & database | Own PostgreSQL client (SCRAM auth, pool, transactions), `model()` definitions with inferred row types, typed repositories (`db.table(Task).all({ where, orderBy, limit })`), raw SQL, migrations |
+| Models & database | Own PostgreSQL client (SCRAM auth, pool, transactions), `model()` definitions with inferred row types, typed repositories (`db.table(Task).all({ where, orderBy, limit })`, `whereRaw`), generated typed row decoders, raw SQL, migrations |
 | Middleware | Global (`app/kernel.ts`) or per controller; `cors`, `requestLogger`, `securityHeaders`, `rateLimit` included |
 | Config | `defineConfig(env => ({ port: env.number("PORT", 3000) }))`, `.env` loading, all missing variables reported at startup |
 | Client | `@qala/client`: typed calls, `ApiError` with server details, custom transport (in-process testing) |
@@ -197,19 +197,19 @@ Writing code for scriptc mostly means writing ordinary, well-typed TypeScript. S
 
 ## Performance
 
-The [example app](examples/tasks) measured as a native binary (`--optimization speed`) and on Bun: same code, byte-identical responses, PostgreSQL on the same 4-core machine, server pinned to 3 cores, load generator on the 4th. One busy desktop, single runs — treat differences under ~30% as noise.
+The [example app](examples/tasks) measured as a native binary (`--optimization speed`) and on Bun: same code, byte-identical responses, PostgreSQL on the same 4-core machine, server pinned to 3 cores, load generator on the 4th, 10 s per scenario, 50 connections. One busy desktop (load ~5–7), single runs — treat differences under ~30% as noise.
 
 | | native | Bun |
 |---|---|---|
-| startup | 6–12 ms | 75–108 ms |
-| memory idle / under load | 5 MB / 9 MB | 55 MB / 145 MB |
-| binary size | 3.3 MB, links only libc | — |
-| `GET /tasks/:id` | 8 384 req/s | 6 653 req/s |
-| `GET /tasks?q=` (ILIKE search) | 2 266 req/s | 2 441 req/s |
-| `POST /comments` | 400 req/s | 335 req/s |
-| `GET /tasks?limit=50` | 1 277 req/s | 2 516 req/s |
+| startup | 7 ms | 173 ms |
+| memory idle / peak | 5 MB / 8 MB | 58 MB / 148 MB |
+| binary size | ~3 MB, links only libc | — |
+| `GET /tasks?limit=50` | **4 807 req/s** (p99 22 ms) | 3 348 req/s (p99 32 ms) |
+| `GET /tasks/:id` | **9 158 req/s** (p99 11 ms) | 5 888 req/s (p99 35 ms) |
+| `GET /tasks?q=` (ILIKE search) | **2 964 req/s** (p99 29 ms) | 1 454 req/s (p99 180 ms) |
+| `POST /comments` (write + auth) | 406 req/s | 382 req/s |
 
-Memory and startup are where the native build clearly wins. Throughput is close, except for large result sets: row decoding and JSON serialisation of `Record<string, …>` rows run in scriptc's dynamic tier today. Typed row decoding is the next optimisation.
+Why it is fast: `qala generate` writes a typed row decoder for every model (`.qala/models.gen.ts`), rows come off the wire as text arrays and are decoded straight into their static shape, timestamps are converted with string operations instead of `Date`, and each action serialises its result inside a generic wrapper, so `JSON.stringify` is compiled for the real type. Before these changes a 50-row list ran at 1 277 req/s natively — the same code walked untyped records in scriptc's dynamic tier.
 
 ## Packages
 

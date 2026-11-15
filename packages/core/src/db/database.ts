@@ -1,9 +1,11 @@
 import { NotFoundError } from "../errors";
 import type { Model, ModelDef } from "./model";
-import { type Connection, type DbRow, type DbValue, parseUrl, Pool, type QueryResult } from "./pg";
+import { type Connection, type DbRow, type DbValue, parseUrl, Pool, type QueryResult, type RawResult } from "./pg";
 
 /** Runs SQL: the pool (Database) or one checked-out connection (Transaction). */
 export type RunSql = (sql: string, params: DbValue[]) => Promise<QueryResult>;
+/** Runs SQL and returns rows as text values per column (see `RawResult`). */
+export type RunRaw = (sql: string, params: DbValue[]) => Promise<RawResult>;
 
 /** Quotes an identifier: `"user"`. */
 export function ident(name: string): string {
@@ -30,12 +32,23 @@ export type FindOptions<Row, Key extends string> = {
 /** Untyped options as the runtime sees them. */
 type RawFind = { where: Record<string, unknown>; orderBy: [string, string] | null; limit: number | null; offset: number | null };
 
-/** The SQL engine behind `Table`: one non-generic class working on plain records. */
+/**
+ * The SQL engine behind `Table`: one non-generic class. Every SELECT/RETURNING names the model's columns
+ * in field order, rows come back as text values and are decoded by the model (typed decoder if generated).
+ */
 export class TableEngine {
+  /** `"id", "title", ...` in model field order. */
+  private readonly selectList: string;
+
   constructor(
     readonly def: ModelDef,
     private readonly run: RunSql,
-  ) {}
+    private readonly runRaw: RunRaw,
+  ) {
+    const quoted: string[] = [];
+    for (const column of def.columns) quoted.push(ident(column));
+    this.selectList = quoted.join(", ");
+  }
 
   private whereSql(where: Record<string, unknown>, params: DbValue[]): string {
     const parts: string[] = [];
@@ -53,9 +66,20 @@ export class TableEngine {
     return parts.length === 0 ? "" : ` where ${parts.join(" and ")}`;
   }
 
-  async select(options: RawFind): Promise<Record<string, DbValue>[]> {
+  async select(options: RawFind): Promise<unknown[]> {
     const params: DbValue[] = [];
-    let sql = `select * from ${ident(this.def.table)}${this.whereSql(options.where, params)}`;
+    return this.selectWith(this.whereSql(options.where, params), params, options);
+  }
+
+  /** SELECT with a raw condition (`title ilike $1`); its `$n` placeholders refer to `params`. */
+  async selectRaw(condition: string, params: DbValue[], options: RawFind): Promise<unknown[]> {
+    const copy: DbValue[] = [];
+    for (const p of params) copy.push(p);
+    return this.selectWith(condition.trim() === "" ? "" : ` where ${condition}`, copy, options);
+  }
+
+  private async selectWith(where: string, params: DbValue[], options: RawFind): Promise<unknown[]> {
+    let sql = `select ${this.selectList} from ${ident(this.def.table)}${where}`;
     if (options.orderBy !== null) {
       const dir = options.orderBy[1] === "desc" ? "desc" : "asc";
       sql += ` order by ${ident(this.def.columnOf(options.orderBy[0]))} ${dir}`;
@@ -68,7 +92,7 @@ export class TableEngine {
       params.push(Math.floor(options.offset));
       sql += ` offset $${params.length}`;
     }
-    const result = await this.run(sql, params);
+    const result = await this.runRaw(sql, params);
     return this.decodeAll(result.rows);
   }
 
@@ -79,7 +103,7 @@ export class TableEngine {
     return typeof n === "number" ? n : Number(n ?? 0);
   }
 
-  async insert(data: Record<string, unknown>): Promise<Record<string, DbValue>> {
+  async insert(data: Record<string, unknown>): Promise<unknown> {
     const columns: string[] = [];
     const marks: string[] = [];
     const params: DbValue[] = [];
@@ -92,13 +116,13 @@ export class TableEngine {
     }
     const sql =
       columns.length === 0
-        ? `insert into ${ident(this.def.table)} default values returning *`
-        : `insert into ${ident(this.def.table)} (${columns.join(", ")}) values (${marks.join(", ")}) returning *`;
-    const result = await this.run(sql, params);
-    return this.def.decode(result.rows[0]!);
+        ? `insert into ${ident(this.def.table)} default values returning ${this.selectList}`
+        : `insert into ${ident(this.def.table)} (${columns.join(", ")}) values (${marks.join(", ")}) returning ${this.selectList}`;
+    const result = await this.runRaw(sql, params);
+    return this.def.decodeValues(result.rows[0]!);
   }
 
-  async update(id: DbValue, data: Record<string, unknown>): Promise<Record<string, DbValue> | null> {
+  async update(id: DbValue, data: Record<string, unknown>): Promise<unknown> {
     const sets: string[] = [];
     const params: DbValue[] = [];
     for (const key of Object.keys(data)) {
@@ -111,11 +135,11 @@ export class TableEngine {
     const pk = ident(this.def.columnOf(this.def.primaryKey));
     const sql =
       sets.length === 0
-        ? `select * from ${ident(this.def.table)} where ${pk} = $${params.length}`
-        : `update ${ident(this.def.table)} set ${sets.join(", ")} where ${pk} = $${params.length} returning *`;
-    const result = await this.run(sql, params);
+        ? `select ${this.selectList} from ${ident(this.def.table)} where ${pk} = $${params.length}`
+        : `update ${ident(this.def.table)} set ${sets.join(", ")} where ${pk} = $${params.length} returning ${this.selectList}`;
+    const result = await this.runRaw(sql, params);
     const row = result.rows[0];
-    return row === undefined ? null : this.def.decode(row);
+    return row === undefined ? null : this.def.decodeValues(row);
   }
 
   async delete(id: DbValue): Promise<boolean> {
@@ -124,9 +148,9 @@ export class TableEngine {
     return result.affected > 0;
   }
 
-  private decodeAll(rows: DbRow[]): Record<string, DbValue>[] {
-    const out: Record<string, DbValue>[] = [];
-    for (const row of rows) out.push(this.def.decode(row));
+  private decodeAll(rows: (string | null)[][]): unknown[] {
+    const out: unknown[] = [];
+    for (const row of rows) out.push(this.def.decodeValues(row));
     return out;
   }
 }
@@ -146,6 +170,16 @@ export class Table<Row, Key extends string = string> {
 
   async all(options: FindOptions<Row, Key> = {}): Promise<Row[]> {
     const rows = await this.engine.select(rawFind(options));
+    return rows as unknown as Row[];
+  }
+
+  /**
+   * Rows matching a raw SQL condition, still decoded into the model (and through its generated decoder):
+   * `db.table(Task).whereRaw("title ilike $1", [`%${q}%`], { orderBy: ["createdAt", "desc"], limit: 20 })`.
+   * Values always go in `params`, never into the condition text.
+   */
+  async whereRaw(condition: string, params: DbValue[] = [], options: Omit<FindOptions<Row, Key>, "where"> = {}): Promise<Row[]> {
+    const rows = await this.engine.selectRaw(condition, params, rawFind(options));
     return rows as unknown as Row[];
   }
 
@@ -185,7 +219,7 @@ export class Table<Row, Key extends string = string> {
   /** Updates the given fields; `null` if no row has this id. */
   async update(id: string | number, data: Partial<Row>): Promise<Row | null> {
     const row = await this.engine.update(id, data as Record<string, unknown>);
-    if (row === null) return null;
+    if (row === null || row === undefined) return null;
     const typed = row as unknown as Row;
     return typed;
   }
@@ -198,7 +232,10 @@ export class Table<Row, Key extends string = string> {
 
 /** SQL on one connection inside `db.transaction(...)`. */
 export class Transaction {
-  constructor(private readonly run: RunSql) {}
+  constructor(
+    private readonly run: RunSql,
+    private readonly runRaw: RunRaw,
+  ) {}
 
   async query(sql: string, params: DbValue[] = []): Promise<DbRow[]> {
     return (await this.run(sql, params)).rows;
@@ -209,7 +246,7 @@ export class Transaction {
   }
 
   table<Row, Key extends string>(model: Model<Row, Key>): Table<Row, Key> {
-    return new Table<Row, Key>(new TableEngine(model, this.run));
+    return new Table<Row, Key>(new TableEngine(model, this.run, this.runRaw));
   }
 }
 
@@ -225,10 +262,12 @@ export type DatabaseOptions = { max?: number };
 export class Database {
   private readonly pool: Pool;
   private readonly runPool: RunSql;
+  private readonly runPoolRaw: RunRaw;
 
   constructor(url: string, options: DatabaseOptions = {}) {
     this.pool = new Pool(parseUrl(url), options.max ?? 10);
     this.runPool = (sql, params) => this.pool.query(sql, params);
+    this.runPoolRaw = (sql, params) => this.pool.queryRaw(sql, params);
   }
 
   async query(sql: string, params: DbValue[] = []): Promise<DbRow[]> {
@@ -241,16 +280,17 @@ export class Database {
   }
 
   table<Row, Key extends string>(model: Model<Row, Key>): Table<Row, Key> {
-    return new Table<Row, Key>(new TableEngine(model, this.runPool));
+    return new Table<Row, Key>(new TableEngine(model, this.runPool, this.runPoolRaw));
   }
 
   /** Runs `fn` in a transaction: committed if it resolves, rolled back if it throws. */
   async transaction<T>(fn: (tx: Transaction) => Promise<T>): Promise<T> {
     const connection: Connection = await this.pool.acquire();
     const run: RunSql = (sql, params) => connection.query(sql, params);
+    const runRaw: RunRaw = (sql, params) => connection.queryRaw(sql, params);
     try {
       await connection.query("begin", []);
-      const pending: Promise<unknown> = fn(new Transaction(run));
+      const pending: Promise<unknown> = fn(new Transaction(run, runRaw));
       const result: unknown = await pending;
       await connection.query("commit", []);
       // biome-ignore lint/suspicious/noExplicitAny: scriptc checks `as T` at run time and lowers T=void wrongly; `any` hands the value through

@@ -19,15 +19,9 @@ export class PgTaskRepository extends TaskRepository {
     return this.search(filter.q, filter.done ?? null, limit);
   }
 
-  /** Text search needs SQL the repository API does not cover: a raw, parameterised query. */
-  private async search(q: string, done: boolean | null, limit: number): Promise<Task[]> {
-    const rows = await this.db.query(
-      "select * from tasks where title ilike $1 and ($2::boolean is null or done = $2) order by created_at desc limit $3",
-      [`%${q}%`, done, limit],
-    );
-    const tasks: Task[] = [];
-    for (const row of rows) tasks.push(Task.decode(row) as unknown as Task);
-    return tasks;
+  /** Text search needs SQL the repository API does not cover: a raw, parameterised condition, decoded as Task rows. */
+  private search(q: string, done: boolean | null, limit: number): Promise<Task[]> {
+    return this.table.whereRaw("title ilike $1 and ($2::boolean is null or done = $2)", [`%${q}%`, done], { orderBy: ["createdAt", "desc"], limit });
   }
 
   find(id: string): Promise<Task | null> {

@@ -105,29 +105,30 @@ answer the same requests byte for byte, then loads each with `oha` (50 connectio
 Servers run on cores 0–2, `oha` on core 3; PostgreSQL 17 runs in a container on the same machine without pinning.
 
 Machine: 4-core x86-64 laptop, Linux, Bun 1.3.14, scriptc 0.4.13. **Single runs on a busy desktop** (browser
-and other builds open; load average 3–9 during the runs): treat differences under ~30% as noise.
+and other builds open; load average 5–7 during the run): treat differences under ~30% as noise.
 The write scenario is `POST /comments` (validation, task lookup, insert) because task titles are unique.
 
-**Memory and startup** (same in both runs):
+Native built with `--optimization speed` (`bun bench/run.ts --speed`), with the generated model decoders:
 
 | | startup | idle RSS | peak RSS under load |
 |---|---|---|---|
-| native (`dist/app`, 2.9 MB) | 6–12 ms | 5 MB | 9 MB |
-| Bun | 75–108 ms | 55–57 MB | 143–146 MB |
-
-**Throughput**, native built with `--optimization speed` (`bun bench/run.ts --speed`):
+| native (`dist/app`, ~3 MB) | 7 ms | 5 MB | 8 MB |
+| Bun | 173 ms | 58 MB | 148 MB |
 
 | scenario | native req/s | Bun req/s | native p50 / p99 | Bun p50 / p99 |
 |---|---|---|---|---|
-| GET /tasks?limit=50 (50 rows) | 1 277 | 2 516 | 36.4 / 120.2 ms | 17.9 / 46.3 ms |
-| GET /tasks/:id | 8 384 | 6 653 | 5.4 / 15.2 ms | 7.0 / 15.9 ms |
-| GET /tasks?q=… (ILIKE) | 2 266 | 2 441 | 20.6 / 41.4 ms | 19.6 / 35.8 ms |
-| POST /comments | 400 | 335 | 120.5 / 237.0 ms | 120.0 / 1998.5 ms |
+| GET /tasks?limit=50 (50 rows) | **4 807** | 3 348 | 9.6 / 22.3 ms | 14.0 / 32.4 ms |
+| GET /tasks/:id | **9 158** | 5 888 | 5.1 / 10.6 ms | 6.7 / 35.1 ms |
+| GET /tasks?q=… (ILIKE) | **2 964** | 1 454 | 16.2 / 28.6 ms | 29.4 / 179.8 ms |
+| POST /comments | 406 | 382 | 118.8 / 273.1 ms | 125.0 / 274.6 ms |
 
-With the default `release` optimisation the native binary was slower on reads (1 150 / 5 224 / 1 519 req/s for
-the first three rows, Bun 2 107 / 6 842 / 1 213) and close on writes (318 vs 384).
+Before typed row decoding the native binary lost on large result sets (50 rows: 1 277 req/s vs Bun 2 516):
+rows were `Record<string, DbValue>` objects decoded and serialised in scriptc's dynamic tier, and every
+timestamp went through `Date`. Three changes fixed it, all in the framework, none in app code:
 
-What this says today: the native build's clear win is memory (≈16× less under load) and startup; on throughput
-it wins single-row reads and writes but loses on large result sets. The cost there is row decoding and JSON
-serialisation of untyped records (`Record<string, DbValue>`), which scriptc runs in its slower dynamic tier
-(`scriptc build` prints these as SC6101 warnings). Typed row decoding in `@qala/core` is the next optimisation.
+1. `qala generate` writes `.qala/models.gen.ts`: one typed decoder per model, building each row in its static shape
+   from the wire's text values (column order fixed by an explicit select list).
+2. `pgIso` converts Postgres `timestamptz` text (the connection runs in UTC) to ISO with string operations.
+3. Each action serialises its result inside a generic wrapper, so `JSON.stringify` is compiled for the real type.
+
+Micro-benchmark of the 50-row response path (decode + serialise, native): 86 µs → 18 µs.

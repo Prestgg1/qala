@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { checkArchitecture } from "./check";
 import { generate } from "./codegen";
+import type { SkippedModel } from "./models";
 import { makeController, makeMiddleware, makeMigration, makeModel, makeRepository, makeService, type MakeResult } from "./make";
 import { build, dev, migrateCommand, start } from "./run";
 import { routeTable, scanControllers } from "./scan";
@@ -13,7 +14,7 @@ ${color.bold("Usage")}  qala <command> [options]
 
 ${color.bold("Develop")}
   dev                         generate routes, run with Bun, reload on changes
-  generate                    write .qala/routes.gen.ts, .qala/api.ts, .qala/main.ts
+  generate                    write .qala/routes.gen.ts, api.ts, models.gen.ts, main.ts
   routes                      list every route (METHOD PATH controller.action)
   check                       enforce the Clean Architecture dependency rule
   migrate                     apply database/migrations/*.sql
@@ -67,6 +68,11 @@ function printMake(result: MakeResult): void {
   for (const n of result.notes) console.log(color.dim(`  ${n}`));
 }
 
+function printModels(count: number, skipped: SkippedModel[]): void {
+  if (count > 0) console.log(`${color.green("✓")} ${count} model decoder${count === 1 ? "" : "s"}`);
+  for (const m of skipped) console.log(color.yellow(`note: ${m.relFile}:${m.line} model ${m.exportName} uses the generic decoder: ${m.reason}`));
+}
+
 function printRoutes(root: string): void {
   const rows = routeTable(scanControllers(root));
   if (rows.length === 0) {
@@ -104,8 +110,9 @@ export async function main(argv: string[]): Promise<number> {
     }
     case "generate": {
       const root = findRoot();
-      const { written } = generate(root);
+      const { written, models, skippedModels } = generate(root);
       for (const f of written) console.log(`${color.green("wrote")} ${f}`);
+      printModels(models.length, skippedModels);
       printRoutes(root);
       return 0;
     }

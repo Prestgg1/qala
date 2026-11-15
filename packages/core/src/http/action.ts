@@ -1,6 +1,6 @@
 import { SchemaNode, type Infer, type Shape, type InferShape, t } from "../schema";
 import type { Context } from "./context";
-import type { Reply, TypedReply } from "./reply";
+import { json, Reply, type TypedReply } from "./reply";
 
 /** What an action's input schemas look like: a shape (`{ id: t.uuid() }`) or a full schema. */
 export type InputSchemas = {
@@ -36,7 +36,8 @@ export class ActionDef {
 }
 
 export type RuntimeInput = { params: unknown; query: unknown; body: unknown; ctx: Context };
-export type RuntimeHandler = (input: RuntimeInput) => unknown;
+/** A handler as the app runs it: validated input in, finished `Reply` out. */
+export type RuntimeHandler = (input: RuntimeInput) => Promise<Reply>;
 
 /**
  * The typed view of an action, used by the client: `P`/`Q`/`B` are the inputs, `R` what the handler returns.
@@ -47,8 +48,28 @@ function shapeSchema(shape: Shape | undefined): SchemaNode | null {
   return shape === undefined ? null : t.object(shape);
 }
 
-function make(method: string, path: string, input: InputSchemas, handler: unknown): ActionDef {
-  return new ActionDef(method, path, shapeSchema(input.params), shapeSchema(input.query), input.body ?? null, handler as RuntimeHandler);
+function make(method: string, path: string, input: InputSchemas, handler: RuntimeHandler): ActionDef {
+  return new ActionDef(method, path, shapeSchema(input.params), shapeSchema(input.query), input.body ?? null, handler);
+}
+
+/**
+ * Turns a handler's result into a `Reply` while its type is still known, so the JSON serialisation is
+ * compiled for that type (scriptc specialises generic functions) instead of walking an `unknown` value.
+ */
+export function toReply<T>(value: T): Reply {
+  // Checked through an `unknown` view: narrowing a specialised `T` to `Reply` does not compile.
+  const any: unknown = value;
+  if (any instanceof Reply) return any;
+  if (any === undefined) return new Reply(204, "", {});
+  return json(value);
+}
+
+/** Wraps a typed handler as a `RuntimeHandler` (one specialisation per handler type). */
+function wrap<A, R>(handler: (input: A) => R): RuntimeHandler {
+  return async (input) => {
+    const result = await handler(input as A);
+    return toReply(result);
+  };
 }
 
 /**
@@ -56,7 +77,7 @@ function make(method: string, path: string, input: InputSchemas, handler: unknow
  * Declare `params: { id: t.uuid() }` for show/update/destroy to get a typed, validated `params.id`.
  */
 export function action<const I extends InputSchemas, R>(input: I, handler: (input: Input<I, Record<string, string>>) => R): Action<ParamsOf<I, Record<string, string>>, QueryOf<I>, BodyOf<I>, R> {
-  return make("", "", input, handler);
+  return make("", "", input, wrap(handler));
 }
 
 type PathParams<Path extends string> = Path extends `${string}:${infer P}/${infer Rest}` ? { [K in P]: string } & PathParams<`/${Rest}`> : Path extends `${string}:${infer P}` ? { [K in P]: string } : {};
@@ -66,19 +87,19 @@ type VerbHandler<Path extends string, I, R> = (input: Input<I, PathParams<Path>>
 
 /** Custom routes, relative to the controller's prefix: `get("/:id/history", {}, ...)`. */
 export function get<const Path extends string, const I extends InputSchemas, R>(path: Path, input: I, handler: VerbHandler<Path, I, R>): Verb<Path, I, R> {
-  return make("GET", path, input, handler);
+  return make("GET", path, input, wrap(handler));
 }
 export function post<const Path extends string, const I extends InputSchemas, R>(path: Path, input: I, handler: VerbHandler<Path, I, R>): Verb<Path, I, R> {
-  return make("POST", path, input, handler);
+  return make("POST", path, input, wrap(handler));
 }
 export function put<const Path extends string, const I extends InputSchemas, R>(path: Path, input: I, handler: VerbHandler<Path, I, R>): Verb<Path, I, R> {
-  return make("PUT", path, input, handler);
+  return make("PUT", path, input, wrap(handler));
 }
 export function patch<const Path extends string, const I extends InputSchemas, R>(path: Path, input: I, handler: VerbHandler<Path, I, R>): Verb<Path, I, R> {
-  return make("PATCH", path, input, handler);
+  return make("PATCH", path, input, wrap(handler));
 }
 export function del<const Path extends string, const I extends InputSchemas, R>(path: Path, input: I, handler: VerbHandler<Path, I, R>): Verb<Path, I, R> {
-  return make("DELETE", path, input, handler);
+  return make("DELETE", path, input, wrap(handler));
 }
 
 /** What an action resolves to on the wire: the body of a `Reply`, or the returned value itself. */
