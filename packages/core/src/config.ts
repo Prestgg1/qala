@@ -44,6 +44,14 @@ export class Env {
     return false;
   }
 
+  /** A string that looks like a URL (`scheme://...`). */
+  url(name: string, fallback?: string): string {
+    const v = this.string(name, fallback);
+    if (v === "" || /^[A-Za-z][A-Za-z0-9+.-]*:\/\/\S+$/.test(v)) return v;
+    this.missing.push(`${name} (not a URL: ${v})`);
+    return "";
+  }
+
   oneOf<const V extends readonly string[]>(name: string, values: V, fallback?: V[number]): V[number] {
     const v = this.string(name, fallback);
     for (const allowed of values) if (allowed === v) return allowed;

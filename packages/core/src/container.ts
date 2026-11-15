@@ -9,6 +9,10 @@
  *
  * An abstract class can be the token and a concrete class the implementation, which is how the
  * application layer depends on a repository interface while infrastructure provides it.
+ *
+ * Usually none of this is written by hand: `qala generate` reads constructor parameter types and writes
+ * `.qala/providers.gen.ts`; `app/providers.ts` only holds overrides (`provide`, `bind`). Later providers
+ * for the same token replace earlier ones.
  */
 
 export type Token<T> = abstract new (...args: never[]) => T;
@@ -37,6 +41,22 @@ export function transient<T>(token: Token<T>, factory: (c: Container) => T): Pro
 /** A ready value, e.g. configuration: `value(AppConfig, config)`. */
 export function value<T>(token: Token<T>, instance: T): Provider {
   return new Provider(token, token.name, "singleton", () => instance);
+}
+
+/**
+ * An app-provided singleton, for what `qala generate` cannot build itself (e.g. a `Database` from config):
+ * `provide(Database, () => new Database(config.databaseUrl))`. Overrides a generated provider for the same token.
+ */
+export function provide<T>(token: Token<T>, factory: (c: Container) => T): Provider {
+  return new Provider(token, token.name, "singleton", factory);
+}
+
+/**
+ * Serves `token` (usually an abstract class) with `implementation`, sharing its instance:
+ * `bind(Mailer, SmtpMailer)`. Needed only when several classes implement the same abstraction.
+ */
+export function bind<T>(token: Token<T>, implementation: Token<T>): Provider {
+  return new Provider(token, token.name, "singleton", (c) => c.resolve(implementation));
 }
 
 export class Container {

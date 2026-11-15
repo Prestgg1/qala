@@ -2,35 +2,60 @@
 
 exports[`compiler every compiled statement 1`] = `
 {
+  "boardTasks": [
+    "select "orm_tasks"."id", "orm_tasks"."title", "orm_tasks"."id" from "orm_tasks" as "orm_tasks" where ("orm_tasks"."project_id" = $1 and ("orm_tasks"."status" = $2 or $2 is null) and ("orm_tasks"."title" ilike $3::text or $3::text is null)) order by "orm_tasks"."priority" desc, "orm_tasks"."title" asc limit $4::int4",
+    "select "orm_comments"."task_id", "orm_comments"."body" from "orm_comments" as "orm_comments" where "orm_comments"."task_id" in (select "orm_tasks"."id" from "orm_tasks" as "orm_tasks" where ("orm_tasks"."project_id" = $1 and ("orm_tasks"."status" = $2 or $2 is null) and ("orm_tasks"."title" ilike $3::text or $3::text is null)) order by "orm_tasks"."priority" desc, "orm_tasks"."title" asc limit $4::int4) order by "orm_comments"."created_at" asc",
+  ],
+  "closeTickets": [
+    "update "orm_tickets" as "orm_tickets" set "status" = 'closed' where "orm_tickets"."title" = any($1)",
+  ],
   "createTask": [
-    "insert into "orm_tasks" ("project_id", "title", "priority", "status") values ($1::uuid, $2::text, $3::int4, 'todo') returning "orm_tasks"."id", "orm_tasks"."title", "orm_tasks"."status", "orm_tasks"."created_at"",
+    "insert into "orm_tasks" ("project_id", "title", "priority", "status") values ($1, $2, $3, 'todo') returning "orm_tasks"."id", "orm_tasks"."title", "orm_tasks"."status", "orm_tasks"."created_at"",
   ],
   "deleteTask": [
-    "delete from "orm_tasks" as "t" where "t"."id" = $1::uuid",
+    "delete from "orm_tasks" as "t" where "t"."id" = $1",
+  ],
+  "findTask": [
+    "select "orm_tasks"."id", "orm_tasks"."project_id", "orm_tasks"."title", "orm_tasks"."status", "orm_tasks"."priority", "orm_tasks"."estimate", "orm_tasks"."due_at", "orm_tasks"."created_at" from "orm_tasks" as "orm_tasks" where "orm_tasks"."id" = $1 limit 1",
+  ],
+  "openTicket": [
+    "insert into "orm_tickets" ("title", "status") values ($1, $2) returning "orm_tickets"."title", "orm_tickets"."status"",
+  ],
+  "priorityTotal": [
+    "select (coalesce(sum("orm_tasks"."priority"), 0)) from "orm_tasks" as "orm_tasks" where "orm_tasks"."project_id" = $1 limit 1",
   ],
   "projectTaskTitles": [
     "select "pr"."name", "t"."title", "t"."priority" from "orm_projects" as "pr" left join "orm_tasks" as "t" on "t"."project_id" = "pr"."id" where (not "pr"."archived") order by "pr"."name" asc, "t"."title" asc",
   ],
   "projectTasks": [
-    "select "t"."id", "t"."title", "t"."status", "t"."estimate", "t"."due_at", "t"."project_id", "t"."id" from "orm_tasks" as "t" where ("t"."project_id" = $1::uuid and ($2::text is null or "t"."status" = $2::text) and ($3::text is null or "t"."title" ilike $3::text)) order by "t"."priority" desc, "t"."title" asc limit $4::int4",
-    "select "pr"."id", "pr"."id", "pr"."name" from "orm_projects" as "pr" where "pr"."id" in (select "t"."project_id" from "orm_tasks" as "t" where ("t"."project_id" = $1::uuid and ($2::text is null or "t"."status" = $2::text) and ($3::text is null or "t"."title" ilike $3::text)) order by "t"."priority" desc, "t"."title" asc limit $4::int4)",
-    "select "c"."task_id", "c"."id", "c"."body", "c"."id" from "orm_comments" as "c" where "c"."task_id" in (select "t"."id" from "orm_tasks" as "t" where ("t"."project_id" = $1::uuid and ($2::text is null or "t"."status" = $2::text) and ($3::text is null or "t"."title" ilike $3::text)) order by "t"."priority" desc, "t"."title" asc limit $4::int4) order by "c"."created_at" asc",
-    "select "re"."comment_id", "re"."emoji" from "orm_reactions" as "re" where "re"."comment_id" in (select "c"."id" from "orm_comments" as "c" where "c"."task_id" in (select "t"."id" from "orm_tasks" as "t" where ("t"."project_id" = $1::uuid and ($2::text is null or "t"."status" = $2::text) and ($3::text is null or "t"."title" ilike $3::text)) order by "t"."priority" desc, "t"."title" asc limit $4::int4) order by "c"."created_at" asc) order by "re"."emoji" asc",
+    "select "t"."id", "t"."title", "t"."status", "t"."estimate", "t"."due_at", "t"."project_id", "t"."id" from "orm_tasks" as "t" where ("t"."project_id" = $1 and ("t"."status" = $2 or $2 is null) and ("t"."title" ilike $3::text or $3::text is null)) order by "t"."priority" desc, "t"."title" asc limit $4::int4",
+    "select "pr"."id", "pr"."id", "pr"."name" from "orm_projects" as "pr" where "pr"."id" in (select "t"."project_id" from "orm_tasks" as "t" where ("t"."project_id" = $1 and ("t"."status" = $2 or $2 is null) and ("t"."title" ilike $3::text or $3::text is null)) order by "t"."priority" desc, "t"."title" asc limit $4::int4)",
+    "select "c"."task_id", "c"."id", "c"."body", "c"."id" from "orm_comments" as "c" where "c"."task_id" in (select "t"."id" from "orm_tasks" as "t" where ("t"."project_id" = $1 and ("t"."status" = $2 or $2 is null) and ("t"."title" ilike $3::text or $3::text is null)) order by "t"."priority" desc, "t"."title" asc limit $4::int4) order by "c"."created_at" asc",
+    "select "re"."comment_id", "re"."emoji" from "orm_reactions" as "re" where "re"."comment_id" in (select "c"."id" from "orm_comments" as "c" where "c"."task_id" in (select "t"."id" from "orm_tasks" as "t" where ("t"."project_id" = $1 and ("t"."status" = $2 or $2 is null) and ("t"."title" ilike $3::text or $3::text is null)) order by "t"."priority" desc, "t"."title" asc limit $4::int4) order by "c"."created_at" asc) order by "re"."emoji" asc",
   ],
   "quietTasks": [
-    "select "t"."title" from "orm_tasks" as "t" where (not exists (select 1 from "orm_comments" as "c" where "c"."task_id" = "t"."id") or ("t"."priority" >= $1::int4 and exists (select 1 from "orm_comments" as "c" where "c"."task_id" = "t"."id") and ("t"."due_at" is not null))) order by "t"."title" asc",
+    "select "t"."title" from "orm_tasks" as "t" where (not exists (select 1 from "orm_comments" as "c" where "c"."task_id" = "t"."id") or ("t"."priority" >= $1 and exists (select 1 from "orm_comments" as "c" where "c"."task_id" = "t"."id") and ("t"."due_at" is not null))) order by "t"."title" asc",
+  ],
+  "renameTask": [
+    "update "orm_tasks" as "orm_tasks" set "title" = $1 where "orm_tasks"."id" = $2 returning "orm_tasks"."id", "orm_tasks"."title"",
   ],
   "setStatus": [
-    "update "orm_tasks" as "t" set "status" = $1::text where "t"."id" = $2::uuid returning "t"."id", "t"."status"",
+    "update "orm_tasks" as "t" set "status" = $1 where "t"."id" = $2 returning "t"."id", "t"."status"",
   ],
   "statusSummary": [
-    "select "t"."status", count(*), sum("t"."priority"), (max("t"."created_at"))::timestamptz from "orm_tasks" as "t" where "t"."project_id" = $1::uuid group by "t"."status" order by "t"."status" asc",
+    "select "t"."status", count(*), sum("t"."priority"), (max("t"."created_at"))::timestamptz from "orm_tasks" as "t" where "t"."project_id" = $1 group by "t"."status" order by "t"."status" asc",
   ],
   "tasksByIds": [
-    "select "t"."id", "t"."project_id", "t"."title", "t"."status", "t"."priority", "t"."estimate", "t"."due_at", "t"."created_at" from "orm_tasks" as "t" where "t"."id" = any($1::uuid[]) order by "t"."title" asc",
+    "select "t"."id", "t"."project_id", "t"."title", "t"."status", "t"."priority", "t"."estimate", "t"."due_at", "t"."created_at" from "orm_tasks" as "t" where "t"."id" = any($1) order by "t"."title" asc",
+  ],
+  "tasksIn": [
+    "select "orm_tasks"."id", "orm_tasks"."project_id", "orm_tasks"."title", "orm_tasks"."status", "orm_tasks"."priority", "orm_tasks"."estimate", "orm_tasks"."due_at", "orm_tasks"."created_at" from "orm_tasks" as "orm_tasks" where "orm_tasks"."id" = any($1) order by "orm_tasks"."title" asc",
+  ],
+  "ticketsByStatus": [
+    "select "orm_tickets"."title", "orm_tickets"."status" from "orm_tickets" as "orm_tickets" where ("orm_tickets"."status" = $1 or $1 is null) order by "orm_tickets"."title" asc",
   ],
   "topTask": [
-    "select "t"."id", "t"."title" from "orm_tasks" as "t" where "t"."project_id" = $1::uuid order by "t"."priority" desc, "t"."title" asc limit 1",
+    "select "t"."id", "t"."title" from "orm_tasks" as "t" where "t"."project_id" = $1 order by "t"."priority" desc, "t"."title" asc limit 1",
   ],
 }
 `;

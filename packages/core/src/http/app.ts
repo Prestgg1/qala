@@ -1,8 +1,11 @@
 import { Container, type Provider } from "../container";
-import { DomainError, HttpError, NotFoundError, ValidationError } from "../errors";
+import { DatabaseError } from "../db/pg";
+import { DomainError, HttpError, NotFoundError, UnauthorizedError, ValidationError } from "../errors";
+import { pickLocale, translate } from "../i18n/messages";
 import { Logger } from "../log";
 import type { Issue, SchemaNode } from "../schema";
 import type { ActionDef, RuntimeInput } from "./action";
+import { type Authenticate, USER_KEY } from "./auth";
 import { readBody } from "./body";
 import { Context, RequestData, splitUrl } from "./context";
 import type { ControllerDef } from "./controller";
@@ -30,6 +33,10 @@ export type AppOptions = {
   logger?: Logger;
   /** Show error messages and stacks of unexpected errors in responses (development only). */
   exposeErrors?: boolean;
+  /** Resolves the signed-in user for actions/controllers with `auth` (generated from `app/auth.ts`). */
+  authenticate?: Authenticate;
+  /** Default locale of framework messages ("en"); a supported `Accept-Language` overrides it per request. */
+  locale?: string;
 };
 
 /** One registered route. */
@@ -41,6 +48,10 @@ export class Route {
     readonly action: string,
     readonly def: ActionDef,
     readonly middleware: Middleware[],
+    /** "required" / "optional" / "": whether the app authenticates before the handler. */
+    readonly auth: string = "",
+    /** The resource a returned `null` names in its 404 ("" for a generic "Not found"). */
+    readonly resource: string = "",
   ) {}
 }
 
@@ -61,6 +72,8 @@ export class App {
   private readonly middleware: Middleware[];
   private readonly onError: ErrorHandler | null;
   private readonly exposeErrors: boolean;
+  private readonly authenticate: Authenticate | null;
+  readonly locale: string;
 
   constructor(options: AppOptions) {
     this.container = new Container(options.providers ?? []);
@@ -68,6 +81,8 @@ export class App {
     this.onError = options.onError ?? null;
     this.logger = options.logger ?? new Logger();
     this.exposeErrors = options.exposeErrors ?? false;
+    this.authenticate = options.authenticate ?? null;
+    this.locale = options.locale ?? "en";
     for (const entry of options.controllers) this.register(entry);
   }
 
@@ -87,7 +102,8 @@ export class App {
       }
       const full = joinPath(entry.prefix, path);
       const index = this.routes.length;
-      this.routes.push(new Route(method, full, entry.name, name, def, entry.controller.middleware));
+      const auth = def.auth !== "" ? def.auth : entry.controller.auth ? "required" : "";
+      this.routes.push(new Route(method, full, entry.name, name, def, entry.controller.middleware, auth, entry.controller.resourceName));
       this.router.add(method, full, index);
       if (method === "PATCH" && def.method === "") this.router.add("PUT", full, index);
     }
@@ -178,17 +194,28 @@ export class App {
       }
       if (allowed.length > 0) {
         ctx.setHeader("allow", allowed.join(", "));
-        throw new HttpError(405, `Method ${ctx.method} not allowed`, "method_not_allowed");
+        throw new HttpError(405, `Method ${ctx.method} not allowed`, "method_not_allowed", null, true, { method: ctx.method });
       }
-      throw new NotFoundError(`No route for ${ctx.method} ${ctx.path}`);
+      throw new HttpError(404, `No route for ${ctx.method} ${ctx.path}`, "not_found", null, true, { key: "route_not_found", method: ctx.method, path: ctx.path });
     }
     const route = this.routes[match.route]!;
     ctx.params = match.params;
-    return compose(route.middleware, ctx, () => this.run(route.def, ctx));
+    return compose(route.middleware, ctx, () => this.run(route, ctx));
   }
 
-  private async run(def: ActionDef, ctx: Context): Promise<Reply> {
-    const input: RuntimeInput = { params: ctx.params, query: ctx.query, body: undefined, files: [], ctx };
+  private async run(route: Route, ctx: Context): Promise<Reply> {
+    const def = route.def;
+    const input: RuntimeInput = { params: ctx.params, query: ctx.query, body: undefined, files: [], id: ctx.params["id"] ?? "", user: null, ctx };
+    if (route.auth !== "") {
+      if (this.authenticate === null) throw new Error(`${route.controller}.${route.action} needs authentication but the app has no authenticate hook (app/auth.ts)`);
+      const user = await this.authenticate(ctx);
+      if (user === null || user === undefined) {
+        if (route.auth === "required") throw new UnauthorizedError();
+      } else {
+        input.user = user;
+        ctx.set(USER_KEY, user);
+      }
+    }
     if (def.params !== null) input.params = check(def.params, ctx.params, true, "route parameters");
     if (def.query !== null) input.query = check(def.query, ctx.query, true, "query");
     if (def.body !== null || def.multipart !== null) {
@@ -196,7 +223,15 @@ export class App {
       input.files = parsed.files;
       input.body = def.body === null ? parsed.value : check(def.body, parsed.value, parsed.form, "body");
     }
-    return def.handler(input);
+    const reply = await def.handler(input);
+    if (reply.kind === "missing") {
+      if (route.resource === "") throw new NotFoundError();
+      throw new HttpError(404, `${route.resource} not found`, "not_found", null, true, { key: "resource_not_found", resource: route.resource });
+    }
+    if (reply.kind === "implicit" && reply.status === 200 && def.method === "" && route.action === "store") {
+      return new Reply(201, reply.body, reply.headers, reply.cookies);
+    }
+    return reply;
   }
 
   private async errorReply(error: unknown, ctx: Context): Promise<Reply> {
@@ -208,16 +243,74 @@ export class App {
         error = inner;
       }
     }
+    const locale = pickLocale(ctx.header("accept-language"), this.locale);
+    if (error instanceof DatabaseError) {
+      const mapped = databaseHttpError(error);
+      if (mapped !== null) error = mapped;
+    }
+    if (error instanceof ValidationError) {
+      return errorBody(error.status, error.code, translate("validation_failed", error.params, locale, error.message), translateIssues(error.issues, locale));
+    }
     if (error instanceof HttpError) {
       if (error.status >= 500) this.logger.error(error.message, { method: ctx.method, path: ctx.path });
-      return errorBody(error.status, error.code, error.message, error.details);
+      const message = error.translatable ? translate(error.params["key"] ?? error.code, error.params, locale, error.message) : error.message;
+      return errorBody(error.status, error.code, message, error.details);
     }
     if (error instanceof DomainError) return errorBody(422, error.code, error.message, null);
     const message = error instanceof Error ? error.message : String(error);
     const stack = error instanceof Error ? (error.stack ?? "") : "";
     this.logger.error(`Unhandled error: ${message}`, { method: ctx.method, path: ctx.path, stack });
-    return errorBody(500, "internal_error", this.exposeErrors ? message : "Internal server error", this.exposeErrors ? stack : null);
+    return errorBody(500, "internal_error", this.exposeErrors ? message : translate("internal_error", {}, locale, "Internal server error"), this.exposeErrors ? stack : null);
   }
+}
+
+/** `email_address` → `emailAddress` (models expose camelCase fields). */
+function camel(column: string): string {
+  return column.replace(/_([a-z0-9])/g, (_m: string, c: string) => c.toUpperCase());
+}
+
+/** The columns named in a Postgres error detail: `Key (project_id, title)=(…) already exists.` → camelCase names. */
+function keyFields(detail: string): string[] {
+  const m = /Key \(([^)]*)\)=/.exec(detail);
+  if (m === null) return [];
+  const out: string[] = [];
+  for (const part of (m[1] ?? "").split(",")) {
+    const name = part.trim().replace(/^"|"$/g, "");
+    if (name !== "") out.push(camel(name));
+  }
+  return out;
+}
+
+/** Constraint violations as client errors: unique → 409, foreign key → 400, not null → 422, bad input syntax → 400. */
+function databaseHttpError(error: DatabaseError): HttpError | null {
+  if (error.code === "23505" || error.code === "23503") {
+    const fields = keyFields(error.detail);
+    const unique = error.code === "23505";
+    const field = fields.join(", ");
+    const key = (unique ? "unique_violation" : "foreign_key_violation") + (field === "" ? "_generic" : "");
+    const english = unique ? (field === "" ? "Already exists" : `${field} already exists`) : field === "" ? "Refers to a missing record" : `${field} refers to a missing record`;
+    return new HttpError(unique ? 409 : 400, english, unique ? "unique_violation" : "foreign_key_violation", { constraint: error.constraint, fields }, true, { key, field });
+  }
+  if (error.code === "23502") {
+    const field = camel(error.column);
+    return new HttpError(422, `${field} is required`, "not_null_violation", { field }, true, { field });
+  }
+  if (error.code === "22P02") return new HttpError(400, "Invalid value", "invalid_input", null, true);
+  return null;
+}
+
+/** Validation issues with their messages in `locale` (author-written `custom` messages stay as they are). */
+function translateIssues(issues: Issue[], locale: string): Issue[] {
+  const out: Issue[] = [];
+  for (const issue of issues) {
+    const code = issue.code;
+    if (code === undefined || code === "custom") {
+      out.push({ path: issue.path, message: issue.message });
+      continue;
+    }
+    out.push({ path: issue.path, message: translate(code, issue.params ?? {}, locale, issue.message) });
+  }
+  return out;
 }
 
 function errorBody(status: number, code: string, message: string, details: unknown): Reply {

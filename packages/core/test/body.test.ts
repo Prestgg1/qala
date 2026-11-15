@@ -89,7 +89,7 @@ describe("multipart actions", () => {
   test("fields are validated (coerced) and files delivered", async () => {
     const body = cat([field(b, "title", "hi"), field(b, "count", "3"), ...file(b, "photo", "p.png", "image/png", PNG), ...file(b, "doc", "d.txt", "text/plain", enc.encode("t")), `--${b}--\r\n`]);
     const reply = await send(makeApp(), "/up", type, body);
-    expect(reply.status).toBe(200);
+    expect(reply.status).toBe(201); // a conventional `store` returning a value
     const out = JSON.parse(reply.body) as { title: string; count: number; files: { field: string; size: number; bytes: number[] }[] };
     expect(out.title).toBe("hi");
     expect(out.count).toBe(3);
@@ -117,7 +117,7 @@ describe("multipart actions", () => {
 
   test("JSON still works on an upload action", async () => {
     const reply = await send(makeApp(), "/up", { "content-type": "application/json" }, enc.encode('{"title":"j"}'));
-    expect(reply.status).toBe(200);
+    expect(reply.status).toBe(201);
     expect(JSON.parse(reply.body)).toMatchObject({ title: "j", count: 0, files: [] });
   });
 });

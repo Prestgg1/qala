@@ -34,3 +34,17 @@ export { ws, WsSocket, WsHandlers, WsSender, WsConnection, WsTransport, encodeFr
 export { Upgrade } from "./http/app";
 // password
 export { hashPassword, verifyPassword, type PasswordOptions } from "./crypto/password";
+// A: automatic DI overrides and class controllers
+export { provide, bind } from "./container";
+export { classController, type ClassActions, type ClassController } from "./http/controller";
+// C: response conventions, auth, policies, declared errors, i18n
+export { errors, type ErrorSpec, type ErrorFactories } from "./errors";
+export { currentUser, requireUser, USER_KEY, type AuthTypes, type AppUser, type Authenticate } from "./http/auth";
+export { Policy, authorize, type PolicyAction } from "./http/policy";
+export { registerLocale, hasLocale, translate, pickLocale, type Catalog } from "./i18n/messages";
+// B: model as source of truth (column modifiers, create/update schemas), resource CRUD
+export { ColumnMeta, ColumnMark, NO_COLUMN, type ColumnTarget, type OnDelete, type HasDefault, type IsPrimary } from "./schema";
+export { type InferCreate, type InferUpdate } from "./db/model";
+export { resource, resourceName, scopeParams, type ResourceOptions, type ResourceAction, type ResourceActions, type ResourceBase, type Page } from "./http/resource";
+// D: model events (after-commit side effects, audit/realtime sinks); query(($) => …) lives in @qala/core/query
+export { on, bindEvents, resetEvents, AuditSink, RealtimeSink, ModelChange, EventContext, ChangeQueue, type ChangeKind } from "./db/events";

@@ -52,7 +52,13 @@ export type PlanLevel = {
 };
 
 export type PlanStatement = { sql: string; params: PlanParam[] };
-export type Plan = { mode: ResultMode; statements: PlanStatement[]; levels: PlanLevel[] };
+export type Plan = {
+  mode: ResultMode;
+  statements: PlanStatement[];
+  levels: PlanLevel[];
+  /** For `query(($) => …)`: every parameter with its inferred type (the generated file spells the type out). */
+  inferred: PlanParam[] | null;
+};
 
 const quote = (name: string): string => `"${name.replace(/"/g, '""')}"`;
 
@@ -66,16 +72,80 @@ function literal(value: string | number | boolean | null): string {
   return `'${value.replace(/'/g, "''")}'`;
 }
 
-/** Parameters of one statement, numbered in order of first use. */
+/**
+ * Parameters of one statement, numbered in order of first use.
+ *
+ * A parameter that is only ever compared with or assigned to a column is written bare (`$1`): Postgres
+ * then gives it that column's exact type, so enum, jsonb or domain columns need no hand-written casts.
+ * Anywhere else (raw SQL, `like` patterns, limit) it carries an explicit cast (`$1::int4`).
+ */
 class Params {
   readonly list: PlanParam[] = [];
+  constructor(private readonly bare: Set<string> = new Set()) {}
   ref(p: ParamNode): string {
     let i = this.list.findIndex((x) => x.name === p.name);
     if (i === -1) {
       this.list.push({ name: p.name, kind: p.kind, array: p.array, optional: p.optional });
       i = this.list.length - 1;
     }
+    if (this.bare.has(p.name)) return `$${i + 1}`;
     return `$${i + 1}::${SQL_TYPE[p.kind]}${p.array ? "[]" : ""}`;
+  }
+}
+
+/** How each parameter of a statement is used: next to a column (`bound`) or anywhere else (`other`). */
+class Uses {
+  readonly bound = new Map<string, number>();
+  readonly other = new Map<string, number>();
+  private inc(map: Map<string, number>, name: string): void {
+    map.set(name, (map.get(name) ?? 0) + 1);
+  }
+  node(n: Node | null): void {
+    if (n === null) return;
+    if (n instanceof ParamNode) this.inc(this.other, n.name);
+    else if (n instanceof BinaryNode) {
+      if (n.left instanceof ColumnNode && n.right instanceof ParamNode) this.inc(this.bound, n.right.name);
+      else if (n.right instanceof ColumnNode && n.left instanceof ParamNode) this.inc(this.bound, n.left.name);
+      else {
+        this.node(n.left);
+        this.node(n.right);
+      }
+    } else if (n instanceof LogicalNode) for (const i of n.items) this.node(i);
+    else if (n instanceof NotNode) this.node(n.inner);
+    else if (n instanceof NullTestNode) this.node(n.inner);
+    else if (n instanceof InNode) {
+      if (n.list instanceof ParamNode && n.inner instanceof ColumnNode) this.inc(this.bound, n.list.name);
+      else {
+        this.node(n.inner);
+        if (n.list instanceof ParamNode) this.node(n.list);
+      }
+    } else if (n instanceof LikeNode) {
+      this.node(n.inner);
+      this.node(n.pattern);
+    } else if (n instanceof ExistsNode) this.select(n.query);
+    else if (n instanceof AggregateNode) this.node(n.inner);
+    else if (n instanceof RawNode) for (const a of n.args) this.node(a);
+  }
+  select(ast: SelectAst): void {
+    for (const f of ast.fields) if (f.type === "value") this.node(f.expr);
+    for (const j of ast.joins) this.node(j.on);
+    for (const w of ast.where) this.node(w);
+    for (const g of ast.groupBy) this.node(g);
+    for (const h of ast.having) this.node(h);
+    for (const o of ast.orderBy) this.node(o.expr);
+    this.node(ast.limit);
+    this.node(ast.offset);
+  }
+  assigned(values: { value: Node }[]): void {
+    for (const a of values) {
+      if (a.value instanceof ParamNode) this.inc(this.bound, a.value.name);
+      else this.node(a.value);
+    }
+  }
+  bare(): Set<string> {
+    const out = new Set<string>();
+    for (const name of this.bound.keys()) if (!this.other.has(name)) out.add(name);
+    return out;
   }
 }
 
@@ -97,12 +167,15 @@ function optionalParams(node: Node, out: ParamNode[]): ParamNode[] {
   return out;
 }
 
-/** Wraps a predicate that uses optional parameters: it holds when any of them is null. */
+/**
+ * Wraps a predicate that uses optional parameters: it holds when any of them is null. The comparison
+ * comes first so a bare parameter's type is inferred from its column before the `is null` test.
+ */
 function guarded(node: Node, sql: string, params: Params): string {
   const opt = optionalParams(node, []);
   if (opt.length === 0) return sql;
   const tests = opt.map((p) => `${params.ref(p)} is null`);
-  return `(${tests.join(" or ")} or ${sql})`;
+  return `(${sql} or ${tests.join(" or ")})`;
 }
 
 function expr(node: Node, params: Params): string {
@@ -185,8 +258,17 @@ function valueFields(fields: Field[], start: number): PlanValue[] {
   return out;
 }
 
-function mutationPlan(ast: InsertAst | UpdateAst | DeleteAst, mode: ResultMode): Plan {
-  const params = new Params();
+function mutationPlan(ast: InsertAst | UpdateAst | DeleteAst, mode: ResultMode, inferred: PlanParam[] | null): Plan {
+  const uses = new Uses();
+  if (ast instanceof InsertAst) {
+    uses.assigned(ast.values);
+    if (ast.conflict !== null && ast.conflict.update !== null) uses.assigned(ast.conflict.update);
+  } else {
+    if (ast instanceof UpdateAst) uses.assigned(ast.set);
+    for (const w of ast.where) uses.node(w);
+  }
+  for (const f of ast.returning) if (f.type === "value") uses.node(f.expr);
+  const params = new Params(uses.bare());
   let sql: string;
   let fields: Field[];
   if (ast instanceof InsertAst) {
@@ -212,18 +294,27 @@ function mutationPlan(ast: InsertAst | UpdateAst | DeleteAst, mode: ResultMode):
     fields = ast.returning;
   }
   sql += returning(fields, params);
-  return { mode, statements: [{ sql, params: params.list }], levels: [{ statement: 0, cardinality: "root", parent: -1, fields: valueFields(fields, 0) }] };
+  return { mode, statements: [{ sql, params: params.list }], levels: [{ statement: 0, cardinality: "root", parent: -1, fields: valueFields(fields, 0) }], inferred };
 }
 
 /** Compiles a declared query (its built AST) into SQL statements and a decoding plan. */
 export function compileQuery(def: AnyQueryDef): Plan {
   const built = def.built;
-  if (!(built.ast instanceof SelectAst)) return mutationPlan(built.ast as InsertAst | UpdateAst | DeleteAst, built.mode);
+  const inferred: PlanParam[] | null = def.inferred === null ? null : def.inferred.map((p) => ({ name: p.name, kind: p.kind, array: p.array, optional: p.optional }));
+  if (!(built.ast instanceof SelectAst)) return mutationPlan(built.ast as InsertAst | UpdateAst | DeleteAst, built.mode, inferred);
   const statements: PlanStatement[] = [];
   const levels: PlanLevel[] = [];
 
   const compileLevel = (ast: SelectAst, link: KeyLink | null, cardinality: PlanLevel["cardinality"], parentLevel: number): number => {
-    const params = new Params();
+    const uses = new Uses();
+    uses.select(ast);
+    for (let l: KeyLink | null = link; l !== null; l = l.parentLink) {
+      uses.node(l.childKey);
+      uses.node(l.parentKey);
+      uses.select(l.parentAst);
+    }
+    for (const f of ast.fields) if (f.type === "relation") uses.node(f.relation.parentKey);
+    const params = new Params(uses.bare());
     const index = levels.length;
     const level: PlanLevel = { statement: index, cardinality, parent: parentLevel, fields: [] };
     levels.push(level);
@@ -258,5 +349,5 @@ export function compileQuery(def: AnyQueryDef): Plan {
   };
 
   compileLevel(built.ast, null, "root", -1);
-  return { mode: built.mode, statements, levels };
+  return { mode: built.mode, statements, levels, inferred };
 }

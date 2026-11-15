@@ -45,9 +45,14 @@ export class ParamNode {
   readonly type = "param";
   constructor(
     readonly name: string,
-    readonly kind: ValueKind,
-    readonly array: boolean,
-    readonly optional: boolean,
+    /** For an inferred parameter (`$.x` in `query(...)`), set by the first column/expression it meets. */
+    public kind: ValueKind,
+    public array: boolean,
+    public optional: boolean,
+    /** Declared without a type (`$.x`): its type comes from where it is used. */
+    readonly inferred: boolean = false,
+    /** Whether an inferred parameter's type has been determined yet. */
+    public resolved: boolean = true,
   ) {}
 }
 

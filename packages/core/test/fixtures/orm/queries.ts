@@ -1,5 +1,5 @@
-import { and, count, deleteFrom, defineQuery, desc, asc, eq, exists, from, gte, ilike, inList, insertInto, isNotNull, many, max, not, notExists, one, or, param, sum, update } from "@qala/core/query";
-import { Comment, Project, Reaction, Task } from "./models";
+import { and, asc, coalesce, count, deleteFrom, defineQuery, desc, eq, exists, from, gte, ilike, inList, insertInto, isNotNull, many, max, not, notExists, one, or, param, query, sum, update } from "@qala/core/query";
+import { Comment, Project, Reaction, Task, Ticket } from "./models";
 
 /** A project's tasks with optional filters, their project, comments and the comments' reactions. */
 export const projectTasks = defineQuery({
@@ -86,3 +86,36 @@ export const deleteTask = defineQuery({
   params: { id: param.uuid() },
   query: (p) => deleteFrom({ t: Task }).where((r) => eq(r.t.id, p.id)),
 });
+
+// ---------------------------------------------------------------- query(($) => …): parameters typed by use
+
+/** Same filters as projectTasks, with inferred parameters and single-model sources. */
+export const boardTasks = query(($) =>
+  from(Task)
+    .where((t) => and(t.projectId.eq($.projectId), t.status.eq($.status.optional()), t.title.ilike($.q.optional())))
+    .orderBy((t) => [t.priority.desc(), t.title])
+    .limit($.limit.optional())
+    .select((t) => ({
+      id: t.id,
+      title: t.title,
+      comments: many(Comment, { key: (c) => c.taskId, parent: t.id, query: (q) => q.orderBy((c) => [c.createdAt]).select((c) => ({ body: c.body })) }),
+    })),
+);
+
+/** Whole rows, no selection written. */
+export const tasksIn = query(($) => from(Task).where((t) => t.id.in($.ids)).orderBy((t) => [t.title]));
+
+/** One whole row or null. */
+export const findTask = query(($) => from(Task).where((t) => t.id.eq($.id)).first());
+
+export const renameTask = query(($) => update(Task, { title: $.title }).where((t) => t.id.eq($.id)).returning((t) => ({ id: t.id, title: t.title })));
+
+/** Enum column: no casts written; Postgres types the parameter from the column. */
+export const ticketsByStatus = query(($) => from(Ticket).where((t) => t.status.eq($.status.optional())).orderBy((t) => [t.title]).select((t) => ({ title: t.title, status: t.status })));
+
+export const openTicket = query(($) => insertInto(Ticket, { title: $.title, status: $.status }).returning((t) => ({ title: t.title, status: t.status })));
+
+export const closeTickets = query(($) => update(Ticket, { status: "closed" }).where((t) => t.title.in($.titles)));
+
+/** coalesce(...) is never null: no notNull(...) needed. */
+export const priorityTotal = query(($) => from(Task).where((t) => t.projectId.eq($.projectId)).select((t) => ({ total: coalesce(sum(t.priority), 0) })).first());

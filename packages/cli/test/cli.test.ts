@@ -95,9 +95,12 @@ export const UsersController = controller({}, () => {
 
 describe("route scanning", () => {
   test("prefix and name come from the file path", () => {
-    expect(routeIdentity("tasks.controller.ts")).toEqual({ prefix: "/tasks", name: "tasks" });
-    expect(routeIdentity("admin/users.controller.ts")).toEqual({ prefix: "/admin/users", name: "adminUsers" });
-    expect(routeIdentity("task-lists.controller.ts")).toEqual({ prefix: "/task-lists", name: "taskLists" });
+    expect(routeIdentity("tasks.controller.ts")).toEqual({ prefix: "/tasks", name: "tasks", auth: false });
+    expect(routeIdentity("admin/users.controller.ts")).toEqual({ prefix: "/admin/users", name: "adminUsers", auth: false });
+    expect(routeIdentity("task-lists.controller.ts")).toEqual({ prefix: "/task-lists", name: "taskLists", auth: false });
+    // folders in parentheses group files without changing the URL; (auth) requires authentication
+    expect(routeIdentity("(auth)/tasks.controller.ts")).toEqual({ prefix: "/tasks", name: "tasks", auth: true });
+    expect(routeIdentity("(admin)/admin/users.controller.ts")).toEqual({ prefix: "/admin/users", name: "adminUsers", auth: false });
   });
 
   test("conventional and explicit actions, nested controllers, block-bodied factories", () => {

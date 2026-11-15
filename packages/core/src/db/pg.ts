@@ -19,6 +19,10 @@ export class DatabaseError extends Error {
     message: string,
     readonly code: string,
     readonly detail: string,
+    /** The violated constraint, table and column when Postgres reports them ("" otherwise). */
+    readonly constraint: string = "",
+    readonly table: string = "",
+    readonly column: string = "",
   ) {
     super(message);
   }
@@ -428,7 +432,7 @@ export class Connection {
     }
     if (type === "E") {
       const f = errorFields(body);
-      const err = new DatabaseError(f.get("M") ?? "Database error", f.get("C") ?? "", f.get("D") ?? "");
+      const err = new DatabaseError(f.get("M") ?? "Database error", f.get("C") ?? "", f.get("D") ?? "", f.get("n") ?? "", f.get("t") ?? "", f.get("c") ?? "");
       if (!this.authenticated) return this.onFail(err);
       const current = this.queue[0];
       if (current !== undefined) current.error = err;

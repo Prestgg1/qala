@@ -1,1 +1,1 @@
-{"name": "@qala/core", "version": "0.1.0", "type": "module", "license": "MIT", "exports": {".": "./src/index.ts", "./query": "./src/orm/builder/index.ts", "./package.json": "./package.json"}, "files": ["src", "native"]}
+{"name": "@qala/core", "version": "0.1.0", "type": "module", "license": "MIT", "exports": {".": "./src/index.ts", "./query": "./src/orm/builder/index.ts", "./testing": "./src/testing.ts", "./package.json": "./package.json"}, "files": ["src", "native"]}

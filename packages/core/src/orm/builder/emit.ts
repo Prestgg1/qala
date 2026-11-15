@@ -82,11 +82,32 @@ function levelTypes(entry: EmitEntry): string[] {
   return lines;
 }
 
+const TS_TYPE: Record<PlanParam["kind"], string> = {
+  text: "string",
+  uuid: "string",
+  datetime: "string",
+  integer: "number",
+  bigint: "number",
+  number: "number",
+  boolean: "boolean",
+};
+
+/** The parameter object type of a `query(($) => …)`, from the types its parameters were inferred with. */
+function inferredParamsType(params: PlanParam[]): string {
+  if (params.length === 0) return "Record<string, never>";
+  const parts = params.map((p) => {
+    const t = `${TS_TYPE[p.kind]}${p.array ? "[]" : ""}`;
+    return p.optional ? `${key(p.name)}?: ${t} | null` : `${key(p.name)}: ${t}`;
+  });
+  return `{ ${parts.join("; ")} }`;
+}
+
 function emitOne(entry: EmitEntry): string {
   const { name, plan } = entry;
   levelsInScope = plan.levels;
   const lines: string[] = [];
-  lines.push(`type P_${name} = QueryParams<typeof D_${name}>;`, `type R_${name} = QueryResult<typeof D_${name}>;`);
+  const params = plan.inferred === null ? `QueryParams<typeof D_${name}>` : inferredParamsType(plan.inferred);
+  lines.push(`type P_${name} = ${params};`, `type R_${name} = QueryResult<typeof D_${name}>;`);
   if (plan.mode !== "affected") lines.push(...levelTypes(entry));
   const steps = plan.statements.map((s) => {
     const mapped = s.params.map(paramExpr);

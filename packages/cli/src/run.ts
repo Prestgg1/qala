@@ -49,9 +49,11 @@ export function build(root: string, options: BuildOptions): number {
       throw new CliError(`Build stopped: ${violations.length} architecture violation(s). Fix them or pass --skip-check.`);
     }
   }
-  const { controllers, models, queries } = generate(root);
+  const { controllers, models, queries, providers, diWarnings } = generate(root);
   if (models.length > 0) console.log(`${color.green("✓")} ${models.length} model decoder${models.length === 1 ? "" : "s"}`);
   if (queries > 0) console.log(`${color.green("✓")} ${queries} compiled quer${queries === 1 ? "y" : "ies"}`);
+  if (providers > 0) console.log(`${color.green("✓")} ${providers} injected provider${providers === 1 ? "" : "s"}`);
+  for (const w of diWarnings) console.log(`${color.yellow("note")} ${w}`);
   const scriptc = findBin("scriptc", [root, CLI_DIR]);
   if (scriptc === null) throw new CliError("scriptc not found: add it with `bun add -d scriptc` and list it in trustedDependencies (its postinstall fetches the native compiler)");
   const out = resolve(root, options.out);

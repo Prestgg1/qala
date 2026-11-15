@@ -72,7 +72,8 @@ describe("qala generate: queries", () => {
     expect(written).toContain(".qala/queries.gen.ts");
     const gen = readFileSync(join(root, ".qala/queries.gen.ts"), "utf8");
     expect(gen).toContain('import type { openTasks as D_openTasks } from "../app/infrastructure/queries/tasks.query";');
-    expect(gen).toContain('($2::bool is null or \\"t\\".\\"done\\" = $2::bool)');
+    // Column-bound parameters are bare (Postgres types them from the column); the null test comes second.
+    expect(gen).toContain('(\\"t\\".\\"done\\" = $2 or $2 is null)');
     expect(gen).toContain("export const Queries = { openTasks };");
     expect(existsSync(join(root, ".qala/compile-queries.ts"))).toBe(false);
     const tsc = spawnSync(TSC, ["-p", "tsconfig.json"], { cwd: root, encoding: "utf8" });

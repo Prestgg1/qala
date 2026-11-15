@@ -1,4 +1,5 @@
 import { NotFoundError } from "../errors";
+import { ChangeQueue, hasEffects, ModelChange, needsBefore } from "./events";
 import type { Model, ModelDef } from "./model";
 import { type Connection, type ConnectionConfig, type DbRow, type DbValue, Listener, parseUrl, type PipelineItem, Pool, type QueryResult, type RawResult, type Subscription } from "./pg";
 
@@ -46,10 +47,23 @@ export class TableEngine {
     readonly def: ModelDef,
     private readonly run: RunSql,
     private readonly runRaw: RunRaw,
+    /** Where committed changes go (model events, audit, realtime); null for none. */
+    private readonly changes: ChangeQueue | null = null,
   ) {
     const quoted: string[] = [];
     for (const column of def.columns) quoted.push(ident(column));
     this.selectList = quoted.join(", ");
+  }
+
+  /** Column list qualified by `alias` (`"n"."id", "n"."title"`). */
+  private qualified(alias: string): string {
+    const out: string[] = [];
+    for (const column of this.def.columns) out.push(`${ident(alias)}.${ident(column)}`);
+    return out.join(", ");
+  }
+
+  private wants(kind: "created" | "updated" | "deleted"): boolean {
+    return this.changes !== null && hasEffects(this.def, kind);
   }
 
   private whereSql(where: Record<string, unknown>, params: DbValue[]): string {
@@ -121,7 +135,9 @@ export class TableEngine {
         ? `insert into ${ident(this.def.table)} default values returning ${this.selectList}`
         : `insert into ${ident(this.def.table)} (${columns.join(", ")}) values (${marks.join(", ")}) returning ${this.selectList}`;
     const result = await this.runRaw(sql, params);
-    return this.def.decodeValues(result.rows[0]!);
+    const row = this.def.decodeValues(result.rows[0]!);
+    if (this.changes !== null && this.wants("created")) await this.changes.emit(new ModelChange(this.def, "created", row, null));
+    return row;
   }
 
   async update(id: DbValue, data: Record<string, unknown>): Promise<unknown> {
@@ -135,17 +151,47 @@ export class TableEngine {
     }
     params.push(id);
     const pk = ident(this.def.columnOf(this.def.primaryKey));
-    const sql =
-      sets.length === 0
-        ? `select ${this.selectList} from ${ident(this.def.table)} where ${pk} = $${params.length}`
-        : `update ${ident(this.def.table)} set ${sets.join(", ")} where ${pk} = $${params.length} returning ${this.selectList}`;
-    const result = await this.runRaw(sql, params);
+    const table = ident(this.def.table);
+    if (sets.length === 0) {
+      const found = await this.runRaw(`select ${this.selectList} from ${table} where ${pk} = $${params.length}`, params);
+      const only = found.rows[0];
+      return only === undefined ? null : this.def.decodeValues(only);
+    }
+    const changes = this.changes;
+    if (changes !== null && this.wants("updated")) {
+      if (needsBefore(this.def)) {
+        // The row before and after in one statement: the old row is locked and read in the same UPDATE.
+        const sql = `update ${table} as "n" set ${sets.join(", ")} from (select ${this.selectList} from ${table} where ${pk} = $${params.length} for update) as "o" where "n".${pk} = "o".${pk} returning ${this.qualified("n")}, ${this.qualified("o")}`;
+        const result = await this.runRaw(sql, params);
+        const both = result.rows[0];
+        if (both === undefined) return null;
+        const width = this.def.columns.length;
+        const row = this.def.decodeValues(both.slice(0, width));
+        await changes.emit(new ModelChange(this.def, "updated", row, this.def.decodeValues(both.slice(width))));
+        return row;
+      }
+      const result = await this.runRaw(`update ${table} set ${sets.join(", ")} where ${pk} = $${params.length} returning ${this.selectList}`, params);
+      const raw = result.rows[0];
+      if (raw === undefined) return null;
+      const row = this.def.decodeValues(raw);
+      await changes.emit(new ModelChange(this.def, "updated", row, null));
+      return row;
+    }
+    const result = await this.runRaw(`update ${table} set ${sets.join(", ")} where ${pk} = $${params.length} returning ${this.selectList}`, params);
     const row = result.rows[0];
     return row === undefined ? null : this.def.decodeValues(row);
   }
 
   async delete(id: DbValue): Promise<boolean> {
     const pk = ident(this.def.columnOf(this.def.primaryKey));
+    const changes = this.changes;
+    if (changes !== null && this.wants("deleted")) {
+      const result = await this.runRaw(`delete from ${ident(this.def.table)} where ${pk} = $1 returning ${this.selectList}`, [id]);
+      const raw = result.rows[0];
+      if (raw === undefined) return false;
+      await changes.emit(new ModelChange(this.def, "deleted", this.def.decodeValues(raw), null));
+      return true;
+    }
     const result = await this.run(`delete from ${ident(this.def.table)} where ${pk} = $1`, [id]);
     return result.affected > 0;
   }
@@ -212,6 +258,34 @@ export class Table<Row, Key extends string = string> {
     return this.engine.count(where as Record<string, unknown>);
   }
 
+  // Untyped entry points for generic framework code (e.g. `resource()`), which holds plain records:
+  // asserting a record to `Partial<Row>` inside a generic function does not compile natively.
+
+  /** `all` with a plain record filter. */
+  async allRecords(where: Record<string, unknown>, orderBy: [string, Direction] | null, limit: number | null, offset: number | null): Promise<Row[]> {
+    const rows = await this.engine.select({ where, orderBy, limit, offset });
+    return rows as unknown as Row[];
+  }
+
+  /** `count` with a plain record filter. */
+  countRecords(where: Record<string, unknown>): Promise<number> {
+    return this.engine.count(where);
+  }
+
+  /** `insert` of a plain record. */
+  async insertRecord(data: Record<string, unknown>): Promise<Row> {
+    const row = await this.engine.insert(data);
+    return row as unknown as Row;
+  }
+
+  /** `update` with a plain record. */
+  async updateRecord(id: string | number, data: Record<string, unknown>): Promise<Row | null> {
+    const row = await this.engine.update(id, data);
+    if (row === null || row === undefined) return null;
+    const typed = row as unknown as Row;
+    return typed;
+  }
+
   /** Inserts a row; omitted fields take their database defaults. Returns the stored row. */
   async insert(data: Partial<Row>): Promise<Row> {
     const row = await this.engine.insert(data as Record<string, unknown>);
@@ -238,6 +312,8 @@ export class Transaction {
     private readonly run: RunSql,
     private readonly runRaw: RunRaw,
     private readonly runBatch: RunBatch,
+    /** Model changes made in this transaction, dispatched after COMMIT. */
+    readonly changes: ChangeQueue = new ChangeQueue(true),
   ) {}
 
   /** Several commands in one round trip on the transaction's connection (see `Database.batchRaw`). */
@@ -253,8 +329,8 @@ export class Transaction {
     return (await this.run(sql, params)).affected;
   }
 
-  table<Row, Key extends string>(model: Model<Row, Key>): Table<Row, Key> {
-    return new Table<Row, Key>(new TableEngine(model, this.run, this.runRaw));
+  table<Row, Key extends string>(model: Model<Row, Key, unknown, unknown>): Table<Row, Key> {
+    return new Table<Row, Key>(new TableEngine(model, this.run, this.runRaw, this.changes));
   }
 }
 
@@ -273,6 +349,8 @@ export class Database {
   private listener: Listener | null = null;
   private readonly runPool: RunSql;
   private readonly runPoolRaw: RunRaw;
+  /** Changes of single statements: dispatched as soon as they are committed. */
+  private readonly changes = new ChangeQueue(false);
 
   constructor(url: string, options: DatabaseOptions = {}) {
     this.config = parseUrl(url);
@@ -299,8 +377,8 @@ export class Database {
     return this.pool.pipeline(items);
   }
 
-  table<Row, Key extends string>(model: Model<Row, Key>): Table<Row, Key> {
-    return new Table<Row, Key>(new TableEngine(model, this.runPool, this.runPoolRaw));
+  table<Row, Key extends string>(model: Model<Row, Key, unknown, unknown>): Table<Row, Key> {
+    return new Table<Row, Key>(new TableEngine(model, this.runPool, this.runPoolRaw, this.changes));
   }
 
   /** Runs `fn` in a transaction: committed if it resolves, rolled back if it throws. */
@@ -309,23 +387,32 @@ export class Database {
     const run: RunSql = (sql, params) => connection.query(sql, params);
     const runRaw: RunRaw = (sql, params) => connection.queryRaw(sql, params);
     const runBatch: RunBatch = (items) => connection.pipeline(items);
+    let released = false;
+    const changes = new ChangeQueue(true);
     try {
       await connection.query("begin", []);
-      const pending: Promise<unknown> = fn(new Transaction(run, runRaw, runBatch));
+      const pending: Promise<unknown> = fn(new Transaction(run, runRaw, runBatch, changes));
       const result: unknown = await pending;
       await connection.query("commit", []);
+      this.pool.release(connection);
+      released = true;
+      // Model events of the transaction's writes, now that they are committed.
+      await changes.flush();
       // biome-ignore lint/suspicious/noExplicitAny: scriptc checks `as T` at run time and lowers T=void wrongly; `any` hands the value through
       const out: any = result;
       return out;
     } catch (error) {
-      try {
-        await connection.query("rollback", []);
-      } catch {
-        // the connection is gone; the server rolls back on its own
+      changes.discard();
+      if (!released) {
+        try {
+          await connection.query("rollback", []);
+        } catch {
+          // the connection is gone; the server rolls back on its own
+        }
       }
       throw error;
     } finally {
-      this.pool.release(connection);
+      if (!released) this.pool.release(connection);
     }
   }
 

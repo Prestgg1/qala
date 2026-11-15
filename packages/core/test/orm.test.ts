@@ -2,7 +2,8 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { batch, Database, run } from "@qala/core";
-import { compileQuery } from "@qala/core/query";
+import { compileQuery, from, query, sql } from "@qala/core/query";
+import { Task } from "./fixtures/orm/models";
 import { render } from "./fixtures/orm/generate";
 import { Queries } from "./fixtures/orm/queries.gen";
 import * as declared from "./fixtures/orm/queries";
@@ -17,7 +18,11 @@ const T = (n: number) => `20000000-0000-4000-8000-00000000000${n}`;
 const C = (n: number) => `30000000-0000-4000-8000-00000000000${n}`;
 
 beforeAll(async () => {
-  await db.execute("drop table if exists orm_reactions, orm_comments, orm_tasks, orm_projects");
+  await db.execute("drop table if exists orm_reactions, orm_comments, orm_tasks, orm_projects, orm_tickets");
+  await db.execute("drop type if exists orm_ticket_status");
+  await db.execute("create type orm_ticket_status as enum ('open', 'closed')");
+  await db.execute("create table orm_tickets (id uuid primary key default gen_random_uuid(), title text not null unique, status orm_ticket_status not null, tags text[])");
+  await db.execute("insert into orm_tickets (title, status) values ('Login broken', 'open'), ('Slow board', 'closed')");
   await db.execute("create table orm_projects (name text not null, archived boolean not null default false, id uuid primary key)");
   // Columns in a different order than the model: the compiler always names its columns.
   await db.execute(`create table orm_tasks (
@@ -40,7 +45,8 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await db.execute("drop table if exists orm_reactions, orm_comments, orm_tasks, orm_projects");
+  await db.execute("drop table if exists orm_reactions, orm_comments, orm_tasks, orm_projects, orm_tickets");
+  await db.execute("drop type if exists orm_ticket_status");
   db.close();
 });
 
@@ -52,7 +58,7 @@ describe("compiler", () => {
   test("optional filters compile to static SQL", () => {
     const plan = compileQuery(declared.projectTasks);
     expect(plan.statements[0]!.sql).toBe(
-      'select "t"."id", "t"."title", "t"."status", "t"."estimate", "t"."due_at", "t"."project_id", "t"."id" from "orm_tasks" as "t" where ("t"."project_id" = $1::uuid and ($2::text is null or "t"."status" = $2::text) and ($3::text is null or "t"."title" ilike $3::text)) order by "t"."priority" desc, "t"."title" asc limit $4::int4',
+      'select "t"."id", "t"."title", "t"."status", "t"."estimate", "t"."due_at", "t"."project_id", "t"."id" from "orm_tasks" as "t" where ("t"."project_id" = $1 and ("t"."status" = $2 or $2 is null) and ("t"."title" ilike $3::text or $3::text is null)) order by "t"."priority" desc, "t"."title" asc limit $4::int4',
     );
     expect(plan.statements[0]!.params.map((p) => p.name)).toEqual(["projectId", "status", "q", "limit"]);
   });
@@ -172,5 +178,67 @@ describe("run", () => {
       }),
     ).rejects.toThrow("abort");
     expect((await db.query("select count(*)::int as n from orm_tasks where title = 'Temp'"))[0]!["n"]).toBe(0);
+  });
+});
+
+describe("query(($) => …): parameters typed by use", () => {
+  test("types come from the columns they meet; column-bound parameters carry no cast", () => {
+    const plan = compileQuery(declared.boardTasks);
+    expect(plan.inferred).toEqual([
+      { name: "projectId", kind: "uuid", array: false, optional: false },
+      { name: "status", kind: "text", array: false, optional: true },
+      { name: "q", kind: "text", array: false, optional: true },
+      { name: "limit", kind: "integer", array: false, optional: true },
+    ]);
+    expect(plan.statements[0]!.sql).toContain('"orm_tasks"."project_id" = $1 and ("orm_tasks"."status" = $2 or $2 is null)');
+    expect(compileQuery(declared.tasksIn).inferred).toEqual([{ name: "ids", kind: "uuid", array: true, optional: false }]);
+    expect(compileQuery(declared.openTicket).statements[0]!.sql).toBe('insert into "orm_tickets" ("title", "status") values ($1, $2) returning "orm_tickets"."title", "orm_tickets"."status"');
+  });
+
+  test("the generated parameter type is spelled out", () => {
+    const gen = readFileSync(join(import.meta.dir, "fixtures/orm/queries.gen.ts"), "utf8");
+    expect(gen).toContain("type P_boardTasks = { projectId: string; status?: string | null; q?: string | null; limit?: number | null };");
+    expect(gen).toContain("type P_tasksIn = { ids: string[] };");
+  });
+
+  test("a parameter nothing types is a compile error naming it", () => {
+    const bad = query(($) => from(Task).select((t) => ({ id: t.id, x: sql<string>("text", "upper({0})", $.label) })));
+    expect(() => compileQuery(bad)).toThrow(/Cannot infer the type of \$\.label/);
+    const ok = query(($) => from(Task).select((t) => ({ id: t.id, x: sql<string>("text", "upper({0})", $.label.as("text")) })));
+    expect(compileQuery(ok).inferred).toEqual([{ name: "label", kind: "text", array: false, optional: false }]);
+  });
+
+  test("conflicting uses are a compile error", () => {
+    const bad = query(($) => from(Task).where((t) => t.id.eq($.x)).limit($.x));
+    expect(() => compileQuery(bad)).toThrow(/\$\.x is used as uuid and as integer/);
+  });
+
+  test("runs: single-model sources, whole rows, first(), relations", async () => {
+    const tasks = await run(db, Queries.boardTasks, { projectId: P1, limit: 2 });
+    expect(tasks).toEqual([
+      { id: T(1), title: "Design API", comments: [{ body: "first" }, { body: "second" }] },
+      { id: T(3), title: "Ship it", comments: [{ body: "ship!" }] },
+    ]);
+    expect((await run(db, Queries.boardTasks, { projectId: P1, status: "todo", q: "%docs%" })).map((t) => t.title)).toEqual(["Write docs"]);
+    const rows = await run(db, Queries.tasksIn, { ids: [T(2), T(4)] });
+    expect(rows.map((r) => [r.title, r.status, r.estimate, r.dueAt])).toEqual([
+      ["Beta plan", "done", null, null],
+      ["Write docs", "todo", null, null],
+    ]);
+    expect((await run(db, Queries.findTask, { id: T(1) }))?.title).toBe("Design API");
+    expect(await run(db, Queries.findTask, { id: "20000000-0000-4000-8000-000000000099" })).toBeNull();
+    expect(await run(db, Queries.priorityTotal, { projectId: P3 })).toEqual({ total: 0 });
+    expect(await run(db, Queries.priorityTotal, { projectId: P1 })).toEqual({ total: 7 });
+  });
+
+  test("enum columns: no casts written, filters / inserts / updates work", async () => {
+    expect(await run(db, Queries.ticketsByStatus, { status: "open" })).toEqual([{ title: "Login broken", status: "open" }]);
+    expect((await run(db, Queries.ticketsByStatus, {})).length).toBe(2);
+    expect(await run(db, Queries.openTicket, { title: "New bug", status: "open" })).toEqual([{ title: "New bug", status: "open" }]);
+    expect(await run(db, Queries.closeTickets, { titles: ["New bug", "Login broken"] })).toBe(2);
+    expect((await run(db, Queries.ticketsByStatus, { status: "closed" })).map((t) => t.title)).toEqual(["Login broken", "New bug", "Slow board"]);
+    const renamed = await run(db, Queries.renameTask, { id: T(2), title: "Write the docs" });
+    expect(renamed).toEqual([{ id: T(2), title: "Write the docs" }]);
+    await run(db, Queries.renameTask, { id: T(2), title: "Write docs" });
   });
 });

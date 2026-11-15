@@ -2,15 +2,52 @@
 
 import { compiled, groupPush, pgArray, pgIso, step, type DbValue, type RawResult } from "@qala/core";
 import type { QueryParams, QueryResult, QueryRow } from "@qala/core/query";
+import type { boardTasks as D_boardTasks } from "./queries";
+import type { closeTickets as D_closeTickets } from "./queries";
 import type { createTask as D_createTask } from "./queries";
 import type { deleteTask as D_deleteTask } from "./queries";
+import type { findTask as D_findTask } from "./queries";
+import type { openTicket as D_openTicket } from "./queries";
+import type { priorityTotal as D_priorityTotal } from "./queries";
 import type { projectTasks as D_projectTasks } from "./queries";
 import type { projectTaskTitles as D_projectTaskTitles } from "./queries";
 import type { quietTasks as D_quietTasks } from "./queries";
+import type { renameTask as D_renameTask } from "./queries";
 import type { setStatus as D_setStatus } from "./queries";
 import type { statusSummary as D_statusSummary } from "./queries";
 import type { tasksByIds as D_tasksByIds } from "./queries";
+import type { tasksIn as D_tasksIn } from "./queries";
+import type { ticketsByStatus as D_ticketsByStatus } from "./queries";
 import type { topTask as D_topTask } from "./queries";
+
+type P_boardTasks = { projectId: string; status?: string | null; q?: string | null; limit?: number | null };
+type R_boardTasks = QueryResult<typeof D_boardTasks>;
+type E_boardTasks_0 = QueryRow<typeof D_boardTasks>;
+type E_boardTasks_1 = E_boardTasks_0["comments"][number];
+export const boardTasks = compiled<P_boardTasks, R_boardTasks>(
+  "boardTasks",
+  [
+    step<P_boardTasks>("select \"orm_tasks\".\"id\", \"orm_tasks\".\"title\", \"orm_tasks\".\"id\" from \"orm_tasks\" as \"orm_tasks\" where (\"orm_tasks\".\"project_id\" = $1 and (\"orm_tasks\".\"status\" = $2 or $2 is null) and (\"orm_tasks\".\"title\" ilike $3::text or $3::text is null)) order by \"orm_tasks\".\"priority\" desc, \"orm_tasks\".\"title\" asc limit $4::int4", (p: P_boardTasks): DbValue[] => [p.projectId, p.status ?? null, p.q ?? null, p.limit ?? null]),
+    step<P_boardTasks>("select \"orm_comments\".\"task_id\", \"orm_comments\".\"body\" from \"orm_comments\" as \"orm_comments\" where \"orm_comments\".\"task_id\" in (select \"orm_tasks\".\"id\" from \"orm_tasks\" as \"orm_tasks\" where (\"orm_tasks\".\"project_id\" = $1 and (\"orm_tasks\".\"status\" = $2 or $2 is null) and (\"orm_tasks\".\"title\" ilike $3::text or $3::text is null)) order by \"orm_tasks\".\"priority\" desc, \"orm_tasks\".\"title\" asc limit $4::int4) order by \"orm_comments\".\"created_at\" asc", (p: P_boardTasks): DbValue[] => [p.projectId, p.status ?? null, p.q ?? null, p.limit ?? null]),
+  ],
+  (rs: RawResult[]): R_boardTasks => {
+    const m1 = new Map<string, E_boardTasks_1[]>();
+    for (const v of rs[1]!.rows) groupPush(m1, v[0] ?? "", { body: v[1] ?? "" });
+    const out: E_boardTasks_0[] = [];
+    for (const v of rs[0]!.rows) out.push({ id: v[0] ?? "", title: v[1] ?? "", comments: m1.get(v[2] ?? "") ?? [] });
+    return out;
+  },
+);
+
+type P_closeTickets = { titles: string[] };
+type R_closeTickets = QueryResult<typeof D_closeTickets>;
+export const closeTickets = compiled<P_closeTickets, R_closeTickets>(
+  "closeTickets",
+  [
+    step<P_closeTickets>("update \"orm_tickets\" as \"orm_tickets\" set \"status\" = 'closed' where \"orm_tickets\".\"title\" = any($1)", (p: P_closeTickets): DbValue[] => [pgArray(p.titles)]),
+  ],
+  (rs: RawResult[]): R_closeTickets => rs[0]!.affected,
+);
 
 type P_createTask = QueryParams<typeof D_createTask>;
 type R_createTask = QueryResult<typeof D_createTask>;
@@ -18,7 +55,7 @@ type E_createTask_0 = QueryRow<typeof D_createTask>;
 export const createTask = compiled<P_createTask, R_createTask>(
   "createTask",
   [
-    step<P_createTask>("insert into \"orm_tasks\" (\"project_id\", \"title\", \"priority\", \"status\") values ($1::uuid, $2::text, $3::int4, 'todo') returning \"orm_tasks\".\"id\", \"orm_tasks\".\"title\", \"orm_tasks\".\"status\", \"orm_tasks\".\"created_at\"", (p: P_createTask): DbValue[] => [p.projectId, p.title, p.priority]),
+    step<P_createTask>("insert into \"orm_tasks\" (\"project_id\", \"title\", \"priority\", \"status\") values ($1, $2, $3, 'todo') returning \"orm_tasks\".\"id\", \"orm_tasks\".\"title\", \"orm_tasks\".\"status\", \"orm_tasks\".\"created_at\"", (p: P_createTask): DbValue[] => [p.projectId, p.title, p.priority]),
   ],
   (rs: RawResult[]): R_createTask => {
     const out: E_createTask_0[] = [];
@@ -32,9 +69,54 @@ type R_deleteTask = QueryResult<typeof D_deleteTask>;
 export const deleteTask = compiled<P_deleteTask, R_deleteTask>(
   "deleteTask",
   [
-    step<P_deleteTask>("delete from \"orm_tasks\" as \"t\" where \"t\".\"id\" = $1::uuid", (p: P_deleteTask): DbValue[] => [p.id]),
+    step<P_deleteTask>("delete from \"orm_tasks\" as \"t\" where \"t\".\"id\" = $1", (p: P_deleteTask): DbValue[] => [p.id]),
   ],
   (rs: RawResult[]): R_deleteTask => rs[0]!.affected,
+);
+
+type P_findTask = { id: string };
+type R_findTask = QueryResult<typeof D_findTask>;
+type E_findTask_0 = QueryRow<typeof D_findTask>;
+export const findTask = compiled<P_findTask, R_findTask>(
+  "findTask",
+  [
+    step<P_findTask>("select \"orm_tasks\".\"id\", \"orm_tasks\".\"project_id\", \"orm_tasks\".\"title\", \"orm_tasks\".\"status\", \"orm_tasks\".\"priority\", \"orm_tasks\".\"estimate\", \"orm_tasks\".\"due_at\", \"orm_tasks\".\"created_at\" from \"orm_tasks\" as \"orm_tasks\" where \"orm_tasks\".\"id\" = $1 limit 1", (p: P_findTask): DbValue[] => [p.id]),
+  ],
+  (rs: RawResult[]): R_findTask => {
+    const out: E_findTask_0[] = [];
+    for (const v of rs[0]!.rows) out.push({ id: v[0] ?? "", projectId: v[1] ?? "", title: v[2] ?? "", status: (v[3] ?? "") as E_findTask_0["status"], priority: Number(v[4]), estimate: v[5] === null || v[5] === undefined ? null : Number(v[5]), dueAt: v[6] === null || v[6] === undefined ? null : pgIso(v[6]), createdAt: pgIso(v[7] ?? "") });
+    return out.length === 0 ? null : out[0]!;
+  },
+);
+
+type P_openTicket = { title: string; status: string };
+type R_openTicket = QueryResult<typeof D_openTicket>;
+type E_openTicket_0 = QueryRow<typeof D_openTicket>;
+export const openTicket = compiled<P_openTicket, R_openTicket>(
+  "openTicket",
+  [
+    step<P_openTicket>("insert into \"orm_tickets\" (\"title\", \"status\") values ($1, $2) returning \"orm_tickets\".\"title\", \"orm_tickets\".\"status\"", (p: P_openTicket): DbValue[] => [p.title, p.status]),
+  ],
+  (rs: RawResult[]): R_openTicket => {
+    const out: E_openTicket_0[] = [];
+    for (const v of rs[0]!.rows) out.push({ title: v[0] ?? "", status: (v[1] ?? "") as E_openTicket_0["status"] });
+    return out;
+  },
+);
+
+type P_priorityTotal = { projectId: string };
+type R_priorityTotal = QueryResult<typeof D_priorityTotal>;
+type E_priorityTotal_0 = QueryRow<typeof D_priorityTotal>;
+export const priorityTotal = compiled<P_priorityTotal, R_priorityTotal>(
+  "priorityTotal",
+  [
+    step<P_priorityTotal>("select (coalesce(sum(\"orm_tasks\".\"priority\"), 0)) from \"orm_tasks\" as \"orm_tasks\" where \"orm_tasks\".\"project_id\" = $1 limit 1", (p: P_priorityTotal): DbValue[] => [p.projectId]),
+  ],
+  (rs: RawResult[]): R_priorityTotal => {
+    const out: E_priorityTotal_0[] = [];
+    for (const v of rs[0]!.rows) out.push({ total: Number(v[0]) });
+    return out.length === 0 ? null : out[0]!;
+  },
 );
 
 type P_projectTasks = QueryParams<typeof D_projectTasks>;
@@ -46,10 +128,10 @@ type E_projectTasks_3 = E_projectTasks_2["reactions"][number];
 export const projectTasks = compiled<P_projectTasks, R_projectTasks>(
   "projectTasks",
   [
-    step<P_projectTasks>("select \"t\".\"id\", \"t\".\"title\", \"t\".\"status\", \"t\".\"estimate\", \"t\".\"due_at\", \"t\".\"project_id\", \"t\".\"id\" from \"orm_tasks\" as \"t\" where (\"t\".\"project_id\" = $1::uuid and ($2::text is null or \"t\".\"status\" = $2::text) and ($3::text is null or \"t\".\"title\" ilike $3::text)) order by \"t\".\"priority\" desc, \"t\".\"title\" asc limit $4::int4", (p: P_projectTasks): DbValue[] => [p.projectId, p.status ?? null, p.q ?? null, p.limit ?? null]),
-    step<P_projectTasks>("select \"pr\".\"id\", \"pr\".\"id\", \"pr\".\"name\" from \"orm_projects\" as \"pr\" where \"pr\".\"id\" in (select \"t\".\"project_id\" from \"orm_tasks\" as \"t\" where (\"t\".\"project_id\" = $1::uuid and ($2::text is null or \"t\".\"status\" = $2::text) and ($3::text is null or \"t\".\"title\" ilike $3::text)) order by \"t\".\"priority\" desc, \"t\".\"title\" asc limit $4::int4)", (p: P_projectTasks): DbValue[] => [p.projectId, p.status ?? null, p.q ?? null, p.limit ?? null]),
-    step<P_projectTasks>("select \"c\".\"task_id\", \"c\".\"id\", \"c\".\"body\", \"c\".\"id\" from \"orm_comments\" as \"c\" where \"c\".\"task_id\" in (select \"t\".\"id\" from \"orm_tasks\" as \"t\" where (\"t\".\"project_id\" = $1::uuid and ($2::text is null or \"t\".\"status\" = $2::text) and ($3::text is null or \"t\".\"title\" ilike $3::text)) order by \"t\".\"priority\" desc, \"t\".\"title\" asc limit $4::int4) order by \"c\".\"created_at\" asc", (p: P_projectTasks): DbValue[] => [p.projectId, p.status ?? null, p.q ?? null, p.limit ?? null]),
-    step<P_projectTasks>("select \"re\".\"comment_id\", \"re\".\"emoji\" from \"orm_reactions\" as \"re\" where \"re\".\"comment_id\" in (select \"c\".\"id\" from \"orm_comments\" as \"c\" where \"c\".\"task_id\" in (select \"t\".\"id\" from \"orm_tasks\" as \"t\" where (\"t\".\"project_id\" = $1::uuid and ($2::text is null or \"t\".\"status\" = $2::text) and ($3::text is null or \"t\".\"title\" ilike $3::text)) order by \"t\".\"priority\" desc, \"t\".\"title\" asc limit $4::int4) order by \"c\".\"created_at\" asc) order by \"re\".\"emoji\" asc", (p: P_projectTasks): DbValue[] => [p.projectId, p.status ?? null, p.q ?? null, p.limit ?? null]),
+    step<P_projectTasks>("select \"t\".\"id\", \"t\".\"title\", \"t\".\"status\", \"t\".\"estimate\", \"t\".\"due_at\", \"t\".\"project_id\", \"t\".\"id\" from \"orm_tasks\" as \"t\" where (\"t\".\"project_id\" = $1 and (\"t\".\"status\" = $2 or $2 is null) and (\"t\".\"title\" ilike $3::text or $3::text is null)) order by \"t\".\"priority\" desc, \"t\".\"title\" asc limit $4::int4", (p: P_projectTasks): DbValue[] => [p.projectId, p.status ?? null, p.q ?? null, p.limit ?? null]),
+    step<P_projectTasks>("select \"pr\".\"id\", \"pr\".\"id\", \"pr\".\"name\" from \"orm_projects\" as \"pr\" where \"pr\".\"id\" in (select \"t\".\"project_id\" from \"orm_tasks\" as \"t\" where (\"t\".\"project_id\" = $1 and (\"t\".\"status\" = $2 or $2 is null) and (\"t\".\"title\" ilike $3::text or $3::text is null)) order by \"t\".\"priority\" desc, \"t\".\"title\" asc limit $4::int4)", (p: P_projectTasks): DbValue[] => [p.projectId, p.status ?? null, p.q ?? null, p.limit ?? null]),
+    step<P_projectTasks>("select \"c\".\"task_id\", \"c\".\"id\", \"c\".\"body\", \"c\".\"id\" from \"orm_comments\" as \"c\" where \"c\".\"task_id\" in (select \"t\".\"id\" from \"orm_tasks\" as \"t\" where (\"t\".\"project_id\" = $1 and (\"t\".\"status\" = $2 or $2 is null) and (\"t\".\"title\" ilike $3::text or $3::text is null)) order by \"t\".\"priority\" desc, \"t\".\"title\" asc limit $4::int4) order by \"c\".\"created_at\" asc", (p: P_projectTasks): DbValue[] => [p.projectId, p.status ?? null, p.q ?? null, p.limit ?? null]),
+    step<P_projectTasks>("select \"re\".\"comment_id\", \"re\".\"emoji\" from \"orm_reactions\" as \"re\" where \"re\".\"comment_id\" in (select \"c\".\"id\" from \"orm_comments\" as \"c\" where \"c\".\"task_id\" in (select \"t\".\"id\" from \"orm_tasks\" as \"t\" where (\"t\".\"project_id\" = $1 and (\"t\".\"status\" = $2 or $2 is null) and (\"t\".\"title\" ilike $3::text or $3::text is null)) order by \"t\".\"priority\" desc, \"t\".\"title\" asc limit $4::int4) order by \"c\".\"created_at\" asc) order by \"re\".\"emoji\" asc", (p: P_projectTasks): DbValue[] => [p.projectId, p.status ?? null, p.q ?? null, p.limit ?? null]),
   ],
   (rs: RawResult[]): R_projectTasks => {
     const m3 = new Map<string, E_projectTasks_3[]>();
@@ -88,11 +170,26 @@ type E_quietTasks_0 = QueryRow<typeof D_quietTasks>;
 export const quietTasks = compiled<P_quietTasks, R_quietTasks>(
   "quietTasks",
   [
-    step<P_quietTasks>("select \"t\".\"title\" from \"orm_tasks\" as \"t\" where (not exists (select 1 from \"orm_comments\" as \"c\" where \"c\".\"task_id\" = \"t\".\"id\") or (\"t\".\"priority\" >= $1::int4 and exists (select 1 from \"orm_comments\" as \"c\" where \"c\".\"task_id\" = \"t\".\"id\") and (\"t\".\"due_at\" is not null))) order by \"t\".\"title\" asc", (p: P_quietTasks): DbValue[] => [p.minPriority]),
+    step<P_quietTasks>("select \"t\".\"title\" from \"orm_tasks\" as \"t\" where (not exists (select 1 from \"orm_comments\" as \"c\" where \"c\".\"task_id\" = \"t\".\"id\") or (\"t\".\"priority\" >= $1 and exists (select 1 from \"orm_comments\" as \"c\" where \"c\".\"task_id\" = \"t\".\"id\") and (\"t\".\"due_at\" is not null))) order by \"t\".\"title\" asc", (p: P_quietTasks): DbValue[] => [p.minPriority]),
   ],
   (rs: RawResult[]): R_quietTasks => {
     const out: E_quietTasks_0[] = [];
     for (const v of rs[0]!.rows) out.push({ title: v[0] ?? "" });
+    return out;
+  },
+);
+
+type P_renameTask = { title: string; id: string };
+type R_renameTask = QueryResult<typeof D_renameTask>;
+type E_renameTask_0 = QueryRow<typeof D_renameTask>;
+export const renameTask = compiled<P_renameTask, R_renameTask>(
+  "renameTask",
+  [
+    step<P_renameTask>("update \"orm_tasks\" as \"orm_tasks\" set \"title\" = $1 where \"orm_tasks\".\"id\" = $2 returning \"orm_tasks\".\"id\", \"orm_tasks\".\"title\"", (p: P_renameTask): DbValue[] => [p.title, p.id]),
+  ],
+  (rs: RawResult[]): R_renameTask => {
+    const out: E_renameTask_0[] = [];
+    for (const v of rs[0]!.rows) out.push({ id: v[0] ?? "", title: v[1] ?? "" });
     return out;
   },
 );
@@ -103,7 +200,7 @@ type E_setStatus_0 = QueryRow<typeof D_setStatus>;
 export const setStatus = compiled<P_setStatus, R_setStatus>(
   "setStatus",
   [
-    step<P_setStatus>("update \"orm_tasks\" as \"t\" set \"status\" = $1::text where \"t\".\"id\" = $2::uuid returning \"t\".\"id\", \"t\".\"status\"", (p: P_setStatus): DbValue[] => [p.status, p.id]),
+    step<P_setStatus>("update \"orm_tasks\" as \"t\" set \"status\" = $1 where \"t\".\"id\" = $2 returning \"t\".\"id\", \"t\".\"status\"", (p: P_setStatus): DbValue[] => [p.status, p.id]),
   ],
   (rs: RawResult[]): R_setStatus => {
     const out: E_setStatus_0[] = [];
@@ -118,7 +215,7 @@ type E_statusSummary_0 = QueryRow<typeof D_statusSummary>;
 export const statusSummary = compiled<P_statusSummary, R_statusSummary>(
   "statusSummary",
   [
-    step<P_statusSummary>("select \"t\".\"status\", count(*), sum(\"t\".\"priority\"), (max(\"t\".\"created_at\"))::timestamptz from \"orm_tasks\" as \"t\" where \"t\".\"project_id\" = $1::uuid group by \"t\".\"status\" order by \"t\".\"status\" asc", (p: P_statusSummary): DbValue[] => [p.projectId]),
+    step<P_statusSummary>("select \"t\".\"status\", count(*), sum(\"t\".\"priority\"), (max(\"t\".\"created_at\"))::timestamptz from \"orm_tasks\" as \"t\" where \"t\".\"project_id\" = $1 group by \"t\".\"status\" order by \"t\".\"status\" asc", (p: P_statusSummary): DbValue[] => [p.projectId]),
   ],
   (rs: RawResult[]): R_statusSummary => {
     const out: E_statusSummary_0[] = [];
@@ -133,11 +230,41 @@ type E_tasksByIds_0 = QueryRow<typeof D_tasksByIds>;
 export const tasksByIds = compiled<P_tasksByIds, R_tasksByIds>(
   "tasksByIds",
   [
-    step<P_tasksByIds>("select \"t\".\"id\", \"t\".\"project_id\", \"t\".\"title\", \"t\".\"status\", \"t\".\"priority\", \"t\".\"estimate\", \"t\".\"due_at\", \"t\".\"created_at\" from \"orm_tasks\" as \"t\" where \"t\".\"id\" = any($1::uuid[]) order by \"t\".\"title\" asc", (p: P_tasksByIds): DbValue[] => [pgArray(p.ids)]),
+    step<P_tasksByIds>("select \"t\".\"id\", \"t\".\"project_id\", \"t\".\"title\", \"t\".\"status\", \"t\".\"priority\", \"t\".\"estimate\", \"t\".\"due_at\", \"t\".\"created_at\" from \"orm_tasks\" as \"t\" where \"t\".\"id\" = any($1) order by \"t\".\"title\" asc", (p: P_tasksByIds): DbValue[] => [pgArray(p.ids)]),
   ],
   (rs: RawResult[]): R_tasksByIds => {
     const out: E_tasksByIds_0[] = [];
     for (const v of rs[0]!.rows) out.push({ id: v[0] ?? "", projectId: v[1] ?? "", title: v[2] ?? "", status: (v[3] ?? "") as E_tasksByIds_0["status"], priority: Number(v[4]), estimate: v[5] === null || v[5] === undefined ? null : Number(v[5]), dueAt: v[6] === null || v[6] === undefined ? null : pgIso(v[6]), createdAt: pgIso(v[7] ?? "") });
+    return out;
+  },
+);
+
+type P_tasksIn = { ids: string[] };
+type R_tasksIn = QueryResult<typeof D_tasksIn>;
+type E_tasksIn_0 = QueryRow<typeof D_tasksIn>;
+export const tasksIn = compiled<P_tasksIn, R_tasksIn>(
+  "tasksIn",
+  [
+    step<P_tasksIn>("select \"orm_tasks\".\"id\", \"orm_tasks\".\"project_id\", \"orm_tasks\".\"title\", \"orm_tasks\".\"status\", \"orm_tasks\".\"priority\", \"orm_tasks\".\"estimate\", \"orm_tasks\".\"due_at\", \"orm_tasks\".\"created_at\" from \"orm_tasks\" as \"orm_tasks\" where \"orm_tasks\".\"id\" = any($1) order by \"orm_tasks\".\"title\" asc", (p: P_tasksIn): DbValue[] => [pgArray(p.ids)]),
+  ],
+  (rs: RawResult[]): R_tasksIn => {
+    const out: E_tasksIn_0[] = [];
+    for (const v of rs[0]!.rows) out.push({ id: v[0] ?? "", projectId: v[1] ?? "", title: v[2] ?? "", status: (v[3] ?? "") as E_tasksIn_0["status"], priority: Number(v[4]), estimate: v[5] === null || v[5] === undefined ? null : Number(v[5]), dueAt: v[6] === null || v[6] === undefined ? null : pgIso(v[6]), createdAt: pgIso(v[7] ?? "") });
+    return out;
+  },
+);
+
+type P_ticketsByStatus = { status?: string | null };
+type R_ticketsByStatus = QueryResult<typeof D_ticketsByStatus>;
+type E_ticketsByStatus_0 = QueryRow<typeof D_ticketsByStatus>;
+export const ticketsByStatus = compiled<P_ticketsByStatus, R_ticketsByStatus>(
+  "ticketsByStatus",
+  [
+    step<P_ticketsByStatus>("select \"orm_tickets\".\"title\", \"orm_tickets\".\"status\" from \"orm_tickets\" as \"orm_tickets\" where (\"orm_tickets\".\"status\" = $1 or $1 is null) order by \"orm_tickets\".\"title\" asc", (p: P_ticketsByStatus): DbValue[] => [p.status ?? null]),
+  ],
+  (rs: RawResult[]): R_ticketsByStatus => {
+    const out: E_ticketsByStatus_0[] = [];
+    for (const v of rs[0]!.rows) out.push({ title: v[0] ?? "", status: (v[1] ?? "") as E_ticketsByStatus_0["status"] });
     return out;
   },
 );
@@ -148,7 +275,7 @@ type E_topTask_0 = QueryRow<typeof D_topTask>;
 export const topTask = compiled<P_topTask, R_topTask>(
   "topTask",
   [
-    step<P_topTask>("select \"t\".\"id\", \"t\".\"title\" from \"orm_tasks\" as \"t\" where \"t\".\"project_id\" = $1::uuid order by \"t\".\"priority\" desc, \"t\".\"title\" asc limit 1", (p: P_topTask): DbValue[] => [p.projectId]),
+    step<P_topTask>("select \"t\".\"id\", \"t\".\"title\" from \"orm_tasks\" as \"t\" where \"t\".\"project_id\" = $1 order by \"t\".\"priority\" desc, \"t\".\"title\" asc limit 1", (p: P_topTask): DbValue[] => [p.projectId]),
   ],
   (rs: RawResult[]): R_topTask => {
     const out: E_topTask_0[] = [];
@@ -158,4 +285,4 @@ export const topTask = compiled<P_topTask, R_topTask>(
 );
 
 /** Every compiled query, for `run(db, Queries.x, params)` and `batch(db, { … })`. */
-export const Queries = { createTask, deleteTask, projectTasks, projectTaskTitles, quietTasks, setStatus, statusSummary, tasksByIds, topTask };
+export const Queries = { boardTasks, closeTickets, createTask, deleteTask, findTask, openTicket, priorityTotal, projectTasks, projectTaskTitles, quietTasks, renameTask, setStatus, statusSummary, tasksByIds, tasksIn, ticketsByStatus, topTask };

@@ -12,7 +12,7 @@
  *         .select((r) => ({ id: r.t.id, title: r.t.title, comments: many({ c: Comment }, { key: (c) => c.c.taskId, parent: r.t.id }) })),
  *   });
  */
-import type { InferModel, Model, ModelDef } from "../../db/model";
+import { type InferModel, type Model, ModelDef } from "../../db/model";
 import {
   AggregateNode,
   type AggregateFn,
@@ -53,6 +53,92 @@ export class Expr<T> {
     readonly kind: ValueKind,
     readonly nullable: boolean,
   ) {}
+
+  /** `this = value`; with an optional parameter the condition is skipped when it is absent. */
+  eq(value: Operand<NoInfer<T>>): Expr<boolean> {
+    return eq(this, value);
+  }
+  ne(value: Operand<NoInfer<T>>): Expr<boolean> {
+    return ne(this, value);
+  }
+  lt(value: Operand<NoInfer<T>>): Expr<boolean> {
+    return lt(this, value);
+  }
+  gt(value: Operand<NoInfer<T>>): Expr<boolean> {
+    return gt(this, value);
+  }
+  lte(value: Operand<NoInfer<T>>): Expr<boolean> {
+    return lte(this, value);
+  }
+  gte(value: Operand<NoInfer<T>>): Expr<boolean> {
+    return gte(this, value);
+  }
+  /** `this in (...)`: an array parameter (`$.ids`) or literal values. */
+  in(list: Expr<NonNullable<NoInfer<T>>[]> | readonly NonNullable<NoInfer<T>>[]): Expr<boolean> {
+    return inList(this, list);
+  }
+  like(pattern: Operand<string>): Expr<boolean> {
+    return like(this as unknown as Expr<string>, pattern);
+  }
+  ilike(pattern: Operand<string>): Expr<boolean> {
+    return ilike(this as unknown as Expr<string>, pattern);
+  }
+  isNull(): Expr<boolean> {
+    return isNull(this);
+  }
+  isNotNull(): Expr<boolean> {
+    return isNotNull(this);
+  }
+  asc(nulls: "first" | "last" | null = null): OrderSpec {
+    return asc(this, nulls);
+  }
+  desc(nulls: "first" | "last" | null = null): OrderSpec {
+    return desc(this, nulls);
+  }
+}
+
+/**
+ * A parameter of `query(($) => …)` used before its type is known: `$.projectId`. Its type is taken from
+ * the column (or expression) it is compared with / assigned to; `.optional()` makes every condition
+ * using it disappear when it is absent; `.as("integer")` names the type where nothing else does.
+ */
+// biome-ignore lint/suspicious/noExplicitAny: an inferred parameter fits any operand position
+export class ParamRef extends Expr<any> {
+  constructor(readonly param: ParamNode) {
+    super(param, param.kind, false);
+  }
+
+  /** May be left out (or null): conditions using it are skipped then. */
+  optional(): ParamRef {
+    this.param.optional = true;
+    return this;
+  }
+
+  /** The parameter's type where no column tells it (raw SQL, select list). */
+  as(kind: ValueKind, array = false): ParamRef {
+    adopt(this.param, kind, array, "as()");
+    return this;
+  }
+}
+
+/** Gives an inferred parameter its type (from the column/expression it meets); conflicting uses fail. */
+function adopt(node: Node, kind: ValueKind, array: boolean, where: string): void {
+  if (!(node instanceof ParamNode) || !node.inferred) return;
+  if (!node.resolved) {
+    node.kind = kind;
+    node.array = array;
+    node.resolved = true;
+    return;
+  }
+  if (node.kind !== kind || node.array !== array) {
+    throw new Error(`Parameter $.${node.name} is used as ${node.kind}${node.array ? "[]" : ""} and as ${kind}${array ? "[]" : ""} (${where})`);
+  }
+}
+
+/** Both sides of a comparison inform each other's inferred parameter type. */
+function adoptPair(left: Node, leftKind: ValueKind, right: Node, rightKind: ValueKind): void {
+  if (left instanceof ParamNode && left.inferred && !(right instanceof ParamNode && right.inferred && !right.resolved)) adopt(left, rightKind, false, "comparison");
+  if (right instanceof ParamNode && right.inferred && !(left instanceof ParamNode && left.inferred && !left.resolved)) adopt(right, leftKind, false, "comparison");
 }
 
 // biome-ignore lint/suspicious/noExplicitAny: "any expression" (Expr is invariant in T)
@@ -78,7 +164,11 @@ function bool(node: Node): Expr<boolean> {
 }
 
 function compare(op: ComparisonOp) {
-  return <T>(left: Expr<T>, right: Operand<NoInfer<T>>): Expr<boolean> => bool(new BinaryNode(op, left.node, toNode(right)));
+  return <T>(left: Expr<T>, right: Operand<NoInfer<T>>): Expr<boolean> => {
+    const r = toNode(right);
+    adoptPair(left.node, left.kind, r, right instanceof Expr ? right.kind : literalKind(right));
+    return bool(new BinaryNode(op, left.node, r));
+  };
 }
 
 /** `a = b`. With an optional parameter, the condition is skipped when the parameter is null/absent. */
@@ -92,6 +182,7 @@ export const gte = compare(">=");
 /** `a in (...)`: an array parameter (`param.array(...)`) or literal values. */
 export function inList<T>(left: Expr<T>, list: Expr<NonNullable<NoInfer<T>>[]> | readonly NonNullable<NoInfer<T>>[]): Expr<boolean> {
   if (list instanceof Expr) {
+    adopt(list.node, left.kind, true, "in()");
     if (!(list.node instanceof ParamNode) || !list.node.array) throw new Error("inList: pass an array parameter (param.array(...)) or literal values");
     return bool(new InNode(left.node, list.node));
   }
@@ -101,11 +192,22 @@ export function inList<T>(left: Expr<T>, list: Expr<NonNullable<NoInfer<T>>[]> |
 }
 
 export function like(left: Expr<string> | Expr<string | null>, pattern: Operand<string>): Expr<boolean> {
-  return bool(new LikeNode(left.node, toNode(pattern), false));
+  const p = toNode(pattern);
+  adopt(p, "text", false, "like()");
+  return bool(new LikeNode(left.node, p, false));
 }
 
 export function ilike(left: Expr<string> | Expr<string | null>, pattern: Operand<string>): Expr<boolean> {
-  return bool(new LikeNode(left.node, toNode(pattern), true));
+  const p = toNode(pattern);
+  adopt(p, "text", false, "ilike()");
+  return bool(new LikeNode(left.node, p, true));
+}
+
+/** `coalesce(e, fallback)`: never NULL, so typed without `| null` (no `notNull(...)` needed). */
+export function coalesce<T>(e: Expr<T>, fallback: Operand<NonNullable<NoInfer<T>>>): Expr<NonNullable<T>> {
+  const f = toNode(fallback);
+  adopt(f, e.kind, false, "coalesce()");
+  return new Expr<NonNullable<T>>(new RawNode("coalesce({0}, {1})", [e.node, f], e.kind), e.kind, false);
 }
 
 export function isNull<T>(e: Expr<T>): Expr<boolean> {
@@ -246,7 +348,13 @@ type NullCols<Row> = { readonly [K in keyof Row]-?: Expr<Row[K] | null> };
 type SourceCols<S> = { [A in keyof S]: Cols<InferModel<S[A]>> };
 type NullSourceCols<S> = { [A in keyof S]: NullCols<InferModel<S[A]>> };
 
-function sourceOf(sources: Record<string, AnyModel>): Source {
+/** A model passed directly (`from(Task)`): its table name is the alias and callbacks get its columns. */
+function isModel(value: unknown): value is AnyModel {
+  return value instanceof ModelDef;
+}
+
+function sourceOf(sources: Record<string, AnyModel> | AnyModel): Source {
+  if (isModel(sources)) return { alias: sources.table, model: sources };
   const aliases = Object.keys(sources);
   if (aliases.length !== 1) throw new Error("Pass exactly one source: from({ t: Task })");
   return { alias: aliases[0]!, model: sources[aliases[0]!]! };
@@ -305,14 +413,16 @@ export class SelectBuilder<R> {
   constructor(
     readonly ast: SelectAst,
     private readonly cols: Record<string, Record<string, AnyExpr>>,
+    /** Set for `from(Task)`: callbacks get that source's columns directly (`(t) => t.title`). */
+    private readonly flat: string | null = null,
   ) {}
 
   private next(ast: SelectAst, cols = this.cols): SelectBuilder<R> {
-    return new SelectBuilder<R>(ast, cols);
+    return new SelectBuilder<R>(ast, cols, this.flat);
   }
 
   private row(): R {
-    return this.cols as R;
+    return (this.flat === null ? this.cols : this.cols[this.flat]) as R;
   }
 
   join<S extends Record<string, AnyModel>>(sources: S, on: (r: R & SourceCols<S>) => Expr<boolean>): SelectBuilder<R & SourceCols<S>> {
@@ -325,6 +435,7 @@ export class SelectBuilder<R> {
   }
 
   private addJoin(kind: "inner" | "left", sources: Record<string, AnyModel>, on: (r: unknown) => Expr<boolean>, nullable: boolean): SelectBuilder<unknown> {
+    if (this.flat !== null) throw new Error("Joins need named sources: from({ t: Task }).join({ p: Project }, …)");
     const source = sourceOf(sources);
     if (this.cols[source.alias] !== undefined) throw new Error(`Alias "${source.alias}" is used twice`);
     const onCols = { ...this.cols, [source.alias]: columnsOf(source, false) };
@@ -366,12 +477,14 @@ export class SelectBuilder<R> {
   limit(n: number | Expr<number>): SelectBuilder<R> {
     const ast = this.ast.clone();
     ast.limit = toNode(n);
+    adopt(ast.limit, "integer", false, "limit()");
     return this.next(ast);
   }
 
   offset(n: number | Expr<number>): SelectBuilder<R> {
     const ast = this.ast.clone();
     ast.offset = toNode(n);
+    adopt(ast.offset, "integer", false, "offset()");
     return this.next(ast);
   }
 
@@ -381,6 +494,19 @@ export class SelectBuilder<R> {
     return this.next(ast);
   }
 
+  /** Whole rows of `from(Task)` (every column), without spelling out a selection. */
+  rows(): Selected<RowsOf<R>> {
+    if (this.flat === null) throw new Error("rows() needs from(Model); with named sources use select((r) => r.t)");
+    const ast = this.ast.clone();
+    ast.fields = fieldsOf(this.cols[this.flat]!);
+    return new Selected<RowsOf<R>>(ast, "many");
+  }
+
+  /** The first whole row of `from(Task)`, or null. */
+  first(): First<RowsOf<R>> {
+    return this.rows().first();
+  }
+
   /** Picks the result shape: `select((r) => ({ id: r.t.id, project: r.p.name }))`, or `select((r) => r.t)` for whole rows. */
   select<Sel extends Selection>(fn: (r: R) => Sel): Selected<RowOf<Sel>> {
     const ast = this.ast.clone();
@@ -388,6 +514,9 @@ export class SelectBuilder<R> {
     return new Selected<RowOf<Sel>>(ast, "many");
   }
 }
+
+/** The row type of a single-model builder's columns. */
+type RowsOf<R> = R extends Cols<infer Row> ? Row : never;
 
 /** A query with its selection: returns `Row[]`, or `Row | null` after `.first()`. */
 export class Selected<Row> {
@@ -413,39 +542,56 @@ export class First<Row> {
   ) {}
 }
 
-/** `from({ t: Task })`: the alias (`t`) names the table's columns in the callbacks (`r.t.title`). */
-export function from<S extends Record<string, AnyModel>>(sources: S): SelectBuilder<SourceCols<S>> {
+/**
+ * `from(Task)`: callbacks get the table's columns (`(t) => t.title`). With joins, name the sources:
+ * `from({ t: Task }).join({ p: Project }, (r) => r.p.id.eq(r.t.projectId))` and use `r.t.title`.
+ */
+export function from<M extends AnyModel>(model: M): SelectBuilder<Cols<InferModel<M>>>;
+export function from<S extends Record<string, AnyModel>>(sources: S): SelectBuilder<SourceCols<S>>;
+// biome-ignore lint/suspicious/noExplicitAny: implementation signature of the overloads above
+export function from(sources: Record<string, AnyModel> | AnyModel): SelectBuilder<any> {
   const source = sourceOf(sources);
-  return new SelectBuilder<SourceCols<S>>(new SelectAst(source), { [source.alias]: columnsOf(source, false) });
+  return new SelectBuilder<unknown>(new SelectAst(source), { [source.alias]: columnsOf(source, false) }, isModel(sources) ? source.alias : null);
 }
 
-type RelationOptions<S, Out> = {
-  /** The child's column that references the parent, e.g. `(c) => c.c.taskId`. */
-  key: (r: SourceCols<S>) => AnyExpr;
-  /** The parent's value it equals, e.g. `r.t.id`. */
+type RelationOptions<C, Out> = {
+  /** The child's column that references the parent, e.g. `(c) => c.taskId` (or `c.c.taskId` with named sources). */
+  key: (r: C) => AnyExpr;
+  /** The parent's value it equals, e.g. `t.id`. */
   parent: AnyExpr;
   /** Filters, order and selection of the children (default: every column). */
-  query?: (q: SelectBuilder<SourceCols<S>>) => Selected<Out>;
+  query?: (q: SelectBuilder<C>) => Selected<Out>;
 };
 
-function relation<S extends Record<string, AnyModel>, Out>(cardinality: "many" | "one", sources: S, options: RelationOptions<S, Out>): RelationAst {
+// biome-ignore lint/suspicious/noExplicitAny: shared by the typed overloads of many/one
+function relation<Out>(cardinality: "many" | "one", sources: Record<string, AnyModel> | AnyModel, options: RelationOptions<any, Out>): RelationAst {
   const source = sourceOf(sources);
-  const cols = { [source.alias]: columnsOf(source, false) } as unknown as SourceCols<S>;
-  const base = from(sources);
-  const selected = options.query === undefined ? base.select(() => (cols as unknown as Record<string, Selection>)[source.alias]!) : options.query(base);
+  const own = columnsOf(source, false);
+  const cols: unknown = isModel(sources) ? own : { [source.alias]: own };
+  // biome-ignore lint/suspicious/noExplicitAny: the source shape differs per overload
+  const base: SelectBuilder<any> = from(sources as AnyModel);
+  const selected = options.query === undefined ? base.select(() => own as unknown as Selection) : options.query(base);
   const child = selected.ast;
   if (child.limit !== null || child.offset !== null) throw new Error("Relations cannot have limit/offset (they apply to all parents at once); filter instead");
-  return new RelationAst(cardinality, child, options.key(cols).node, options.parent.node);
+  const key = options.key(cols);
+  adopt(options.parent.node, key.kind, false, "relation parent");
+  return new RelationAst(cardinality, child, key.node, options.parent.node);
 }
 
-/** The parent's children as an array: `comments: many({ c: Comment }, { key: (c) => c.c.taskId, parent: r.t.id })`. */
-export function many<S extends Record<string, AnyModel>, Out = InferModel<S[keyof S]>>(sources: S, options: RelationOptions<S, Out>): RelationSpec<Out[]> {
-  return new RelationSpec<Out[]>(relation("many", sources, options));
+/** The parent's children as an array: `comments: many(Comment, { key: (c) => c.taskId, parent: t.id })`. */
+export function many<M extends AnyModel, Out = InferModel<M>>(model: M, options: RelationOptions<Cols<InferModel<M>>, Out>): RelationSpec<Out[]>;
+export function many<S extends Record<string, AnyModel>, Out = InferModel<S[keyof S]>>(sources: S, options: RelationOptions<SourceCols<S>, Out>): RelationSpec<Out[]>;
+// biome-ignore lint/suspicious/noExplicitAny: implementation signature of the overloads above
+export function many(sources: Record<string, AnyModel> | AnyModel, options: RelationOptions<any, any>): RelationSpec<any> {
+  return new RelationSpec<unknown[]>(relation("many", sources, options));
 }
 
-/** At most one related row, or null: `project: one({ p: Project }, { key: (p) => p.p.id, parent: r.t.projectId })`. */
-export function one<S extends Record<string, AnyModel>, Out = InferModel<S[keyof S]>>(sources: S, options: RelationOptions<S, Out>): RelationSpec<Out | null> {
-  return new RelationSpec<Out | null>(relation("one", sources, options));
+/** At most one related row, or null: `project: one(Project, { key: (p) => p.id, parent: t.projectId })`. */
+export function one<M extends AnyModel, Out = InferModel<M>>(model: M, options: RelationOptions<Cols<InferModel<M>>, Out>): RelationSpec<Out | null>;
+export function one<S extends Record<string, AnyModel>, Out = InferModel<S[keyof S]>>(sources: S, options: RelationOptions<SourceCols<S>, Out>): RelationSpec<Out | null>;
+// biome-ignore lint/suspicious/noExplicitAny: implementation signature of the overloads above
+export function one(sources: Record<string, AnyModel> | AnyModel, options: RelationOptions<any, any>): RelationSpec<any> {
+  return new RelationSpec<unknown>(relation("one", sources, options));
 }
 
 // ---------------------------------------------------------------- mutations
@@ -459,7 +605,10 @@ function assignments(model: ModelDef, values: Record<string, unknown>): Assignme
     if (v === undefined) continue;
     const i = model.keys.indexOf(field);
     if (i === -1) throw new Error(`${model.table}: unknown field "${field}"`);
-    out.push({ column: model.columns[i]!, field, value: toNode(v), kind: kindOfField(model.kinds[i]!) });
+    const kind = kindOfField(model.kinds[i]!);
+    const node = toNode(v);
+    adopt(node, kind, false, `${model.table}.${field}`);
+    out.push({ column: model.columns[i]!, field, value: node, kind });
   }
   return out;
 }
@@ -507,19 +656,21 @@ class WriteBuilder<S, R> extends Mutation<number> {
     private readonly source: Source,
     private readonly set: Assignment[],
     private readonly conds: Node[],
+    private readonly flat: boolean = false,
   ) {
     super(kind === "update" ? new UpdateAst(source, set, conds, []) : new DeleteAst(source, conds, []), "affected");
   }
 
   private cols(): R {
-    return { [this.source.alias]: columnsOf(this.source, false) } as R;
+    const own = columnsOf(this.source, false);
+    return (this.flat ? own : { [this.source.alias]: own }) as R;
   }
 
   where(fn: (r: R) => Condition): WriteBuilder<S, R> {
     const c = fn(this.cols());
     const conds = [...this.conds];
     if (c !== undefined && c !== false) conds.push(c.node);
-    return new WriteBuilder<S, R>(this.kind, this.source, this.set, conds);
+    return new WriteBuilder<S, R>(this.kind, this.source, this.set, conds, this.flat);
   }
 
   returning<Sel extends Record<string, AnyExpr>>(fn: (r: R) => Sel): Mutation<RowOf<Sel>[]> {
@@ -529,21 +680,33 @@ class WriteBuilder<S, R> extends Mutation<number> {
   }
 }
 
-/** `update({ t: Task }, { done: true }).where((r) => eq(r.t.id, p.id))`. */
-export function update<S extends Record<string, AnyModel>>(sources: S, set: Values<InferModel<S[keyof S]>>): WriteBuilder<S, SourceCols<S>> {
+/** `update(Task, { done: true }).where((t) => t.id.eq($.id))` (or named: `update({ t: Task }, …)`). */
+export function update<M extends AnyModel>(model: M, set: Values<InferModel<M>>): WriteBuilder<M, Cols<InferModel<M>>>;
+export function update<S extends Record<string, AnyModel>>(sources: S, set: Values<InferModel<S[keyof S]>>): WriteBuilder<S, SourceCols<S>>;
+export function update(sources: Record<string, AnyModel> | AnyModel, set: Record<string, unknown>): WriteBuilder<unknown, unknown> {
   const source = sourceOf(sources);
-  return new WriteBuilder<S, SourceCols<S>>("update", source, assignments(source.model, set as Record<string, unknown>), []);
+  return new WriteBuilder<unknown, unknown>("update", source, assignments(source.model, set), [], isModel(sources));
 }
 
-/** `deleteFrom({ t: Task }).where((r) => eq(r.t.id, p.id))`. */
-export function deleteFrom<S extends Record<string, AnyModel>>(sources: S): WriteBuilder<S, SourceCols<S>> {
-  return new WriteBuilder<S, SourceCols<S>>("delete", sourceOf(sources), [], []);
+/** `deleteFrom(Task).where((t) => t.id.eq($.id))`. */
+export function deleteFrom<M extends AnyModel>(model: M): WriteBuilder<M, Cols<InferModel<M>>>;
+export function deleteFrom<S extends Record<string, AnyModel>>(sources: S): WriteBuilder<S, SourceCols<S>>;
+export function deleteFrom(sources: Record<string, AnyModel> | AnyModel): WriteBuilder<unknown, unknown> {
+  return new WriteBuilder<unknown, unknown>("delete", sourceOf(sources), [], [], isModel(sources));
 }
 
 // ---------------------------------------------------------------- definitions
 
 type Built = Selected<any> | First<any> | Mutation<any>;
 type ResultOfBuilt<B> = B extends First<infer Row> ? Row | null : B extends Selected<infer Row> ? Row[] : B extends Mutation<infer Out> ? Out : never;
+/** What a `query(...)` callback may return: also a bare `from(Task)…` (its whole rows). */
+// biome-ignore lint/suspicious/noExplicitAny: any builder
+type Buildable = Built | SelectBuilder<any>;
+type ResultOfBuildable<B> = B extends SelectBuilder<infer R> ? RowsOf<R>[] : ResultOfBuilt<B>;
+
+function toBuilt(b: Buildable): Built {
+  return b instanceof SelectBuilder ? b.rows() : b;
+}
 
 const QUERY_BRAND = Symbol.for("qala.QueryDef");
 
@@ -563,13 +726,61 @@ export class QueryDef<P, Res> {
   constructor(
     readonly params: ParamShape,
     private readonly build: () => Built,
+    /** For `query(($) => …)`: the parameters used through `$`, typed by where they were used. */
+    readonly inferred: ParamNode[] | null = null,
   ) {}
 
   /** The query's AST, built on first use (so declaration errors surface when compiling, with its name). */
   get built(): Built {
-    if (this.cached === null) this.cached = this.build();
+    if (this.cached === null) {
+      this.cached = this.build();
+      if (this.inferred !== null) {
+        for (const p of this.inferred) {
+          if (!p.resolved) throw new Error(`Cannot infer the type of $.${p.name}: compare it with a column, assign it to one, or write $.${p.name}.as("integer")`);
+        }
+      }
+    }
     return this.cached;
   }
+}
+
+/** The parameters of a `query(($) => …)`: the generated file spells out their exact types. */
+export type InferredParams = { readonly __inferred: true };
+
+/**
+ * `$` in `query(($) => …)`: any property is a parameter (a `ParamRef`), typed by the column it meets.
+ * Typed loosely on purpose: an index signature would read as `ParamRef | undefined` under
+ * `noUncheckedIndexedAccess`. The exact parameter types are written into `.qala/queries.gen.ts`.
+ */
+// biome-ignore lint/suspicious/noExplicitAny: every property name is a parameter
+export type Params$ = any;
+
+/**
+ * Declares a compiled query; parameters are whatever you use on `$`, typed by the columns they meet:
+ *
+ *   export const boardTasks = query(($) =>
+ *     from(Task).where((t) => and(t.projectId.eq($.projectId), t.status.eq($.status.optional()))).orderBy((t) => [t.position]));
+ *
+ * `qala generate` writes the exact parameter type (`{ projectId: string; status?: string | null }`)
+ * into `.qala/queries.gen.ts`, so callers of `run(db, Queries.boardTasks, …)` are fully typed.
+ */
+export function query<B extends Buildable>(build: ($: Params$) => B): QueryDef<InferredParams, ResultOfBuildable<B>> {
+  const used: ParamNode[] = [];
+  const refs = new Map<string, ParamRef>();
+  const $ = new Proxy({} as Params$, {
+    get(_target, name): ParamRef {
+      if (typeof name !== "string") throw new Error("Query parameters are named with strings");
+      let ref = refs.get(name);
+      if (ref === undefined) {
+        const node = new ParamNode(name, "text", false, false, true, false);
+        used.push(node);
+        ref = new ParamRef(node);
+        refs.set(name, ref);
+      }
+      return ref;
+    },
+  });
+  return new QueryDef<InferredParams, ResultOfBuildable<B>>({}, () => toBuilt(build($)), used);
 }
 
 /** The parameters of a declared query. */
@@ -579,17 +790,17 @@ export type QueryResult<D> = D extends QueryDef<infer _P, infer R> ? R : never;
 /** One row of a declared query's result. */
 export type QueryRow<D> = QueryResult<D> extends (infer Row)[] ? Row : NonNullable<QueryResult<D>>;
 
-export function defineQuery<S extends ParamShape, B extends Built>(definition: { params: S; query: (p: ParamExprs<S>) => B }): QueryDef<ParamsOf<S>, ResultOfBuilt<B>>;
-export function defineQuery<B extends Built>(definition: { query: () => B }): QueryDef<Record<string, never>, ResultOfBuilt<B>>;
+export function defineQuery<S extends ParamShape, B extends Buildable>(definition: { params: S; query: (p: ParamExprs<S>) => B }): QueryDef<ParamsOf<S>, ResultOfBuildable<B>>;
+export function defineQuery<B extends Buildable>(definition: { query: () => B }): QueryDef<Record<string, never>, ResultOfBuildable<B>>;
 // biome-ignore lint/suspicious/noExplicitAny: implementation signature
-export function defineQuery(definition: { params?: ParamShape; query: (p: any) => Built }): QueryDef<any, any> {
+export function defineQuery(definition: { params?: ParamShape; query: (p: any) => Buildable }): QueryDef<any, any> {
   const specs = definition.params ?? {};
   const exprs: Record<string, AnyExpr> = {};
   for (const name of Object.keys(specs)) {
     const s = specs[name]!;
     exprs[name] = new Expr<unknown>(new ParamNode(name, s.kind, s.array, s.optional), s.kind, s.optional);
   }
-  return new QueryDef<unknown, unknown>(specs, () => definition.query(exprs));
+  return new QueryDef<unknown, unknown>(specs, () => toBuilt(definition.query(exprs)));
 }
 
 export { type ValueKind } from "./ast";

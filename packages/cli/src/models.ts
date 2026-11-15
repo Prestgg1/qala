@@ -105,9 +105,21 @@ function describeModel(call: ts.CallExpression, t: string | null): { table: stri
   return { table: tableArg.text, fields };
 }
 
+const COLUMN_MODIFIERS = new Set(["primary", "default", "defaultSql", "now", "unique", "index", "references", "referencesSelf", "type", "nullable"]);
+
 function describeField(expr: ts.Expression, t: string): { kind: FieldKind; nullable: boolean; literal: boolean; empty: "null" | "undefined" } | string {
   let node = expr;
   while (ts.isParenthesizedExpression(node)) node = node.expression;
+  // Column modifiers chained on a schema (`t.uuid().primary()`, `.default(false)`, `.nullable()`):
+  // they do not change how the column decodes, except `.nullable()`.
+  if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && !ts.isIdentifier(node.expression.expression)) {
+    const modifier = node.expression.name.text;
+    if (COLUMN_MODIFIERS.has(modifier)) {
+      const inner = describeField(node.expression.expression, t);
+      if (typeof inner === "string" || modifier !== "nullable") return inner;
+      return { kind: inner.kind, nullable: true, literal: inner.literal, empty: "null" };
+    }
+  }
   if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression) || !ts.isIdentifier(node.expression.expression) || node.expression.expression.text !== t) {
     return `not a ${t}.<kind>() call`;
   }

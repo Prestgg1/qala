@@ -1,10 +1,12 @@
 #!/usr/bin/env bun
 import { checkArchitecture } from "./check";
 import { generate } from "./codegen";
+import { fixApp } from "./fix";
 import type { SkippedModel } from "./models";
 import { makeController, makeMiddleware, makeMigration, makeModel, makeRepository, makeService, type MakeResult } from "./make";
 import { pullCommand } from "./pull";
 import { build, dev, migrateCommand, start } from "./run";
+import { migrateMakeCommand } from "./migrate-make";
 import { routeTable, scanControllers } from "./scan";
 import { scaffold } from "./scaffold";
 import { CliError, color, findRoot } from "./util";
@@ -17,8 +19,9 @@ ${color.bold("Develop")}
   dev                         generate routes, run with Bun, reload on changes
   generate                    write .qala/routes.gen.ts, api.ts, models.gen.ts, main.ts
   routes                      list every route (METHOD PATH controller.action)
-  check                       enforce the Clean Architecture dependency rule
+  check [--fix]               enforce the Clean Architecture dependency rule; --fix rewrites scriptc pitfalls first
   migrate                     apply database/migrations/*.sql
+  migrate:make <name> [--print]  write the SQL that makes the database match the models
   db:pull [--schema public] [--tables a,b] [--out app/domain/schema] [--url postgres://...] [--force]
                               generate models from an existing PostgreSQL database
 
@@ -113,10 +116,12 @@ export async function main(argv: string[]): Promise<number> {
     }
     case "generate": {
       const root = findRoot();
-      const { written, models, skippedModels, queries } = generate(root);
+      const { written, models, skippedModels, queries, providers, diWarnings } = generate(root);
       for (const f of written) console.log(`${color.green("wrote")} ${f}`);
       printModels(models.length, skippedModels);
       if (queries > 0) console.log(`${color.green("✓")} ${queries} compiled quer${queries === 1 ? "y" : "ies"}`);
+      if (providers > 0) console.log(`${color.green("✓")} ${providers} injected provider${providers === 1 ? "" : "s"}`);
+      for (const w of diWarnings) console.log(`${color.yellow("note")} ${w}`);
       printRoutes(root);
       return 0;
     }
@@ -125,6 +130,12 @@ export async function main(argv: string[]): Promise<number> {
       return 0;
     case "check": {
       const root = findRoot();
+      if (args.flags.get("fix") === true) {
+        const report = fixApp(root);
+        for (const f of report.fixes) console.log(`${color.green("fixed")} ${f.file}:${f.line}  ${f.message}`);
+        for (const f of report.unfixable) console.log(color.yellow(`note: ${f.file}:${f.line}  ${f.message}`));
+        if (report.fixes.length > 0) console.log(color.dim(`${report.fixes.length} fix(es) in ${report.files.length} file(s)`));
+      }
       const { files, violations } = checkArchitecture(root);
       for (const v of violations) console.error(`${color.red("✗")} ${v.file}:${v.line}  ${v.message}`);
       if (violations.length > 0) {
@@ -142,6 +153,8 @@ export async function main(argv: string[]): Promise<number> {
       return start(findRoot(), flag(args, "out") ?? "dist/app");
     case "migrate":
       return migrateCommand(findRoot());
+    case "migrate:make":
+      return migrateMakeCommand(findRoot(), needName("add_due_dates"), { print: args.flags.get("print") === true });
     case "db:pull": {
       let root: string;
       try {

@@ -16,3 +16,6 @@ export const Task = model("orm_tasks", {
 export const Comment = model("orm_comments", { id: t.uuid(), taskId: t.uuid(), body: t.string(), createdAt: t.datetime() });
 
 export const Reaction = model("orm_reactions", { id: t.uuid(), commentId: t.uuid(), emoji: t.string() });
+
+/** A table whose `status` is a real Postgres enum type (`orm_ticket_status`). */
+export const Ticket = model("orm_tickets", { id: t.uuid(), title: t.string(), status: t.enum(["open", "closed"]), tags: t.nullable(t.unknown()) });

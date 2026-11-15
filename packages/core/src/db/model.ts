@@ -1,4 +1,4 @@
-import type { InferShape, Issue, SchemaNode, Shape } from "../schema";
+import { ColumnMeta, SchemaNode, t, type ColumnMark, type Infer, type InferShape, type Issue, type Shape } from "../schema";
 import type { DbValue } from "./pg";
 
 /** Turns one row's text values (model field order) into the row object. */
@@ -18,6 +18,14 @@ export class ModelDef {
   decoder: RowDecoder | null = null;
   /** Per field: does a NULL column become `undefined` (a bare `t.optional`) rather than `null`? */
   private readonly missingIsUndefined: boolean[] = [];
+  /** Per field: does the column accept NULL? */
+  readonly nullable: boolean[] = [];
+  /** Column name of the primary key. */
+  readonly primaryColumn: string;
+  /** Validates an insert: fields with a default, a primary key default or NULL are optional. */
+  readonly createSchema: SchemaNode;
+  /** Validates an update: every field optional, the primary key excluded. */
+  readonly updateSchema: SchemaNode;
 
   constructor(
     readonly table: string,
@@ -30,12 +38,30 @@ export class ModelDef {
     readonly fields: SchemaNode[],
     /** Field name of the primary key. */
     readonly primaryKey: string,
+    /** Write an activity/audit row for every change (behaviour provided by the events layer). */
+    readonly audit: boolean = false,
+    /** Realtime scope of a changed row, or null (behaviour provided by the events layer). */
+    readonly realtime: ((row: unknown) => unknown) | null = null,
+    /** Emit `created`/`updated`/`deleted` events for writes through `db.table(model)`. */
+    readonly events: boolean = false,
   ) {
-    for (const field of fields) {
+    const createShape: Shape = {};
+    const updateShape: Shape = {};
+    for (let i = 0; i < fields.length; i++) {
+      const field = fields[i]!;
       const issues: Issue[] = [];
       field.check(null, "", issues, false);
-      this.missingIsUndefined.push(field.optional && issues.length > 0);
+      const acceptsNull = issues.length === 0;
+      this.missingIsUndefined.push(field.optional && !acceptsNull);
+      this.nullable.push(acceptsNull || field.column.isNullable);
+      const key = keys[i]!;
+      const defaulted = field.column.defaultExpr !== null || field.column.isPrimary || key === primaryKey;
+      createShape[key] = defaulted || acceptsNull || field.optional ? t.optional(field) : field;
+      if (key !== primaryKey) updateShape[key] = t.optional(field);
     }
+    this.primaryColumn = this.columnOf(primaryKey);
+    this.createSchema = t.object(createShape);
+    this.updateSchema = t.object(updateShape);
   }
 
   /** Index of a field name, or -1. */
@@ -68,10 +94,36 @@ export class ModelDef {
   }
 }
 
-/** The typed view of a model: `Row` is the row type, `Key` the union of its field names. */
-export type Model<Row, Key extends string = string> = ModelDef & { readonly __row?: () => Row; readonly __key?: () => Key };
+/**
+ * The typed view of a model: `Row` is the row type, `Key` the union of its field names, `Create` what an
+ * insert takes and `Update` what an update takes.
+ */
+export type Model<Row, Key extends string = string, Create = Partial<Row>, Update = Partial<Row>> = ModelDef & {
+  readonly __row?: () => Row;
+  readonly __key?: () => Key;
+  readonly createSchema: SchemaNode & { readonly __type?: () => Create };
+  readonly updateSchema: SchemaNode & { readonly __type?: () => Update };
+};
 /** The row type of a model. */
 export type InferModel<M> = M extends { readonly __row?: () => infer R } ? R : never;
+/** What an insert into the model takes (defaults, primary key and nullable columns are optional). */
+export type InferCreate<M> = M extends { readonly createSchema: { readonly __type?: () => infer C } } ? C : never;
+/** What an update of the model takes (every field optional, no primary key). */
+export type InferUpdate<M> = M extends { readonly updateSchema: { readonly __type?: () => infer U } } ? U : never;
+
+/** Flattens an intersection into one object type (no `& {}`: scriptc must see a single spelling). */
+type Simplify<T> = { [K in keyof T]: T[K] };
+type Marked<S, K extends string> = S extends { readonly [P in K]?: infer D } ? ([NonNullable<D>] extends [() => ColumnMark] ? true : false) : false;
+type DefaultKeys<S extends Shape> = { [K in keyof S]: Marked<S[K], "__default"> extends true ? K : never }[keyof S];
+type PrimaryKeys<S extends Shape> = { [K in keyof S]: Marked<S[K], "__primary"> extends true ? K : never }[keyof S];
+type CreateOptionalKeys<S extends Shape> = { [K in keyof S]: Marked<S[K], "__default"> extends true ? K : null extends Infer<S[K]> ? K : undefined extends Infer<S[K]> ? K : never }[keyof S];
+/** The model's primary key field: a `.primary()` field, else `options.primaryKey`, else "id". */
+type PrimaryKeyOf<S extends Shape, P extends string> = [PrimaryKeys<S>] extends [never] ? ([P] extends [never] ? "id" : P) : PrimaryKeys<S>;
+/** Insert shape; a model that declares no defaults keeps the permissive `Partial<Row>` (older models). */
+type CreateOf<S extends Shape> = [DefaultKeys<S>] extends [never]
+  ? Partial<InferShape<S>>
+  : Simplify<{ [K in Exclude<keyof S, CreateOptionalKeys<S>>]: Infer<S[K]> } & { [K in CreateOptionalKeys<S>]?: Infer<S[K]> }>;
+type UpdateOf<S extends Shape, P extends string> = Simplify<{ [K in Exclude<keyof S, PrimaryKeyOf<S, P>>]?: Infer<S[K]> }>;
 
 function decodeValue(kind: string, text: string): DbValue {
   if (kind === "integer" || kind === "number") return Number(text);
@@ -106,28 +158,59 @@ export function toIso(text: string): string {
   return Number.isNaN(time) ? text : new Date(time).toISOString();
 }
 
-export type ModelOptions = { primaryKey?: string };
+export type ModelOptions<P extends string = string, Row = unknown> = {
+  /** Primary key field (default: the `.primary()` field, else "id"). */
+  primaryKey?: P;
+  /** Record every insert/update/delete through `db.table(model)` as an audit/activity entry. */
+  audit?: boolean;
+  /** Publish changes to realtime subscribers; returns the scope of a changed row. */
+  realtime?: (row: Row) => Record<string, string | null>;
+  /** Emit `Model.created` / `updated` / `deleted` events. */
+  events?: boolean;
+};
 
 /**
- * Declares a table:
+ * Declares a table. The model is the single source of truth: row type, insert/update validation
+ * (`Task.createSchema`, `Task.updateSchema`), typed inserts and migrations (`qala migrate:make`) all come from it.
  *
- *   export const Task = model("tasks", { id: t.uuid(), title: t.string(), done: t.boolean(), createdAt: t.datetime() });
+ *   export const Task = model("tasks", {
+ *     id: t.uuid().primary(),
+ *     title: t.string({ max: 200 }),
+ *     done: t.boolean().default(false),
+ *     projectId: t.uuid().references(Project, { onDelete: "cascade" }),
+ *     createdAt: t.datetime().now(),
+ *   });
  *   export type Task = InferModel<typeof Task>;
  *
  * Field names are camelCase in code and snake_case in the database.
  */
-export function model<const S extends Shape>(table: string, shape: S, options: ModelOptions = {}): Model<InferShape<S>, Extract<keyof S, string>> {
+export function model<const S extends Shape, const P extends string = never>(
+  table: string,
+  shape: S,
+  options: ModelOptions<P, InferShape<S>> = {},
+): Model<InferShape<S>, Extract<keyof S, string>, CreateOf<S>, UpdateOf<S, P>> {
   const keys = Object.keys(shape);
   const columns: string[] = [];
   const kinds: string[] = [];
   const fields: SchemaNode[] = [];
+  let primaryKey: string = options.primaryKey ?? "";
   for (const key of keys) {
     const field = shape[key]!;
     columns.push(snakeCase(key));
     kinds.push(field.kind);
     fields.push(field);
+    if (primaryKey === "" && field.column.isPrimary) primaryKey = key;
   }
-  const primaryKey = options.primaryKey ?? "id";
+  if (primaryKey === "") primaryKey = "id";
   if (!keys.includes(primaryKey)) throw new Error(`model("${table}"): primary key "${primaryKey}" is not a field`);
-  return new ModelDef(table, keys, columns, kinds, fields, primaryKey);
+  // `.referencesSelf()` points at this model's own primary key.
+  const pkColumn = snakeCase(primaryKey);
+  for (let i = 0; i < fields.length; i++) {
+    const f = fields[i]!;
+    const c = f.column;
+    if (!c.refSelf) continue;
+    fields[i] = new SchemaNode(f.kind, f.check, f.optional, f.keys, f.fields, new ColumnMeta(c.isPrimary, c.defaultExpr, c.isUnique, c.isIndexed, table, pkColumn, false, c.onDelete, c.sqlType, c.isNullable));
+  }
+  const realtime = options.realtime === undefined ? null : (options.realtime as unknown as (row: unknown) => unknown);
+  return new ModelDef(table, keys, columns, kinds, fields, primaryKey, options.audit ?? false, realtime, options.events ?? false) as Model<InferShape<S>, Extract<keyof S, string>, CreateOf<S>, UpdateOf<S, P>>;
 }

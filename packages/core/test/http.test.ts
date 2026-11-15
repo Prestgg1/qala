@@ -219,7 +219,7 @@ describe("t.literal", () => {
     const P = t.literal([0, 1, 2, 3]);
     expect(validate(P, 2)).toEqual({ ok: true, value: 2 });
     expect(validate(P, "3", true)).toEqual({ ok: true, value: 3 });
-    expect(validate(P, 9)).toEqual({ ok: false, issues: [{ path: "", message: "must be one of: 0, 1, 2, 3" }] });
+    expect(validate(P, 9)).toEqual({ ok: false, issues: [{ path: "", message: "must be one of: 0, 1, 2, 3", code: "one_of", params: { values: "0, 1, 2, 3" } }] });
     expect(validate(P, "urgent")).toMatchObject({ ok: false });
   });
 });

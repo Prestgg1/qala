@@ -10,6 +10,11 @@ export class Reply {
     readonly headers: Record<string, string>,
     /** `Set-Cookie` header values: one entry per cookie (they cannot be joined into one header). */
     readonly cookies: string[] = [],
+    /**
+     * How the reply was made: "" by the app, "implicit" by the response conventions (a returned value or
+     * `undefined`), "missing" for a returned `null` (turned into a 404 by the app).
+     */
+    readonly kind: string = "",
   ) {}
 }
 
