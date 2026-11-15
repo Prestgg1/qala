@@ -9,7 +9,7 @@ import { pullCommand } from "../src/pull";
 const REPO = resolve(import.meta.dir, "../../..");
 const CORE = join(REPO, "packages/core/src/index.ts");
 const TSC = join(REPO, "node_modules/.bin/tsc");
-const URL = process.env.QALA_TEST_DATABASE_URL ?? "postgres://bordaz:bordaz@localhost:5432/qala_test";
+const URL = process.env.QALA_TEST_DATABASE_URL ?? "postgres://qala:qala@localhost:5432/qala_test";
 
 let db: Database;
 let reachable = true;

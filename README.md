@@ -174,6 +174,40 @@ export function bearerAuth(token: string): Middleware {
 export const kernel = { middleware: [requestLogger(logger), cors(), bearerAuth(config.apiToken)] };
 ```
 
+### Streaming and WebSockets
+
+Server-sent events and streamed bodies are ordinary handler results; the connection stays open until the handler
+closes it or the client goes away:
+
+```ts
+events: get("/events", {}, ({ ctx }) =>
+  sse(ctx, (events) => {
+    events.send({ id: 1, event: "hello", data: JSON.stringify({ ok: true }) });
+    const heartbeat = setInterval(() => events.comment("ping"), 8000);   // heartbeats are the app's job
+    events.onClose(() => clearInterval(heartbeat));                       // close() or client disconnect
+  }),
+),
+export: get("/export", {}, ({ ctx }) => stream(ctx, (out) => { out.write("id,title\n"); out.close(); }, { contentType: "text/csv" })),
+```
+
+WebSocket routes live in controllers too. The upgrade request runs through the global and the controller's middleware
+(auth, CORS) like any request, so a rejected upgrade gets the usual error response (e.g. 401); a plain GET to the path is 426.
+
+```ts
+export const DocsController = controller({ rooms: Rooms }, ({ rooms }) => ({
+  live: ws("/:id/live", {
+    open: (socket, ctx) => rooms.join(ctx.params["id"] ?? "", socket),
+    message: (socket, data) => rooms.receive(socket, data),   // string (text frame) or Uint8Array (binary)
+    close: (socket, code) => rooms.leave(socket),
+  }),
+}), { middleware: [isAuth] });
+```
+
+The WebSocket protocol (RFC 6455 handshake, masking, fragmentation, ping/pong, close, 64-bit lengths) is implemented in
+Qala itself over node:http's `upgrade`, so it compiles into the native binary. Under Bun, `serve()` runs on `Bun.serve`
+(with Bun's WebSocket support behind the same `WsSocket` API), because Bun's node:http neither hands over upgraded sockets
+nor reports a client that leaves a streamed response.
+
 ### Typed client
 
 `qala generate` (also run by `dev` and `build`) writes `.qala/api.ts` with the `Api` type and a route manifest. The frontend imports both:

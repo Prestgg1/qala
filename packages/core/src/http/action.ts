@@ -1,16 +1,25 @@
 import { SchemaNode, type Infer, type Shape, type InferShape, t } from "../schema";
 import type { Context } from "./context";
+import { MultipartLimits, type UploadedFile } from "./multipart";
 import { json, Reply, type TypedReply } from "./reply";
+import type { WsHandlers } from "./websocket";
 
 /** What an action's input schemas look like: a shape (`{ id: t.uuid() }`) or a full schema. */
 export type InputSchemas = {
   params?: Shape;
   query?: Shape;
   body?: SchemaNode;
+  /**
+   * Accept `multipart/form-data` uploads (JSON bodies still work). The handler receives the uploaded `files`;
+   * `body` (if declared, a `t.object(...)`) validates the text fields, with strings coerced like query values.
+   * `true` or limits: `{ maxFileSize: 5_000_000, maxFiles: 3 }` (bytes / count).
+   */
+  files?: true | { maxFileSize?: number; maxFiles?: number };
 };
 
 type ParamsOf<I, Default> = I extends { params: infer P extends Shape } ? InferShape<P> : Default;
-type QueryOf<I> = I extends { query: infer Q extends Shape } ? InferShape<Q> : Record<string, never>;
+/** Without a query schema the handler sees the raw query string values (honest: scriptc checks it at run time). */
+type QueryOf<I> = I extends { query: infer Q extends Shape } ? InferShape<Q> : Record<string, string>;
 type BodyOf<I> = I extends { body: infer B extends SchemaNode } ? Infer<B> : undefined;
 
 /** The validated input a handler receives, plus the raw request context as `ctx`. */
@@ -18,6 +27,8 @@ export type Input<I, DefaultParams> = {
   params: ParamsOf<I, DefaultParams>;
   query: QueryOf<I>;
   body: BodyOf<I>;
+  /** Uploaded files of a multipart request (empty for other bodies). */
+  files: UploadedFile[];
   ctx: Context;
 };
 
@@ -32,10 +43,14 @@ export class ActionDef {
     readonly query: SchemaNode | null,
     readonly body: SchemaNode | null,
     readonly handler: RuntimeHandler,
+    /** Multipart limits when the action accepts uploads, otherwise null. */
+    readonly multipart: MultipartLimits | null = null,
+    /** The callbacks of a WebSocket route (method "WS"), otherwise null. */
+    readonly socket: WsHandlers | null = null,
   ) {}
 }
 
-export type RuntimeInput = { params: unknown; query: unknown; body: unknown; ctx: Context };
+export type RuntimeInput = { params: unknown; query: unknown; body: unknown; files: UploadedFile[]; ctx: Context };
 /** A handler as the app runs it: validated input in, finished `Reply` out. */
 export type RuntimeHandler = (input: RuntimeInput) => Promise<Reply>;
 
@@ -48,8 +63,14 @@ function shapeSchema(shape: Shape | undefined): SchemaNode | null {
   return shape === undefined ? null : t.object(shape);
 }
 
+function multipartLimits(files: true | { maxFileSize?: number; maxFiles?: number } | undefined): MultipartLimits | null {
+  if (files === undefined) return null;
+  if (files === true) return new MultipartLimits(0, 0);
+  return new MultipartLimits(files.maxFileSize ?? 0, files.maxFiles ?? 0);
+}
+
 function make(method: string, path: string, input: InputSchemas, handler: RuntimeHandler): ActionDef {
-  return new ActionDef(method, path, shapeSchema(input.params), shapeSchema(input.query), input.body ?? null, handler);
+  return new ActionDef(method, path, shapeSchema(input.params), shapeSchema(input.query), input.body ?? null, handler, multipartLimits(input.files));
 }
 
 /**

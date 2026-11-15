@@ -8,6 +8,8 @@ export class Reply {
     /** Already-serialised body (JSON text, plain text or empty). */
     readonly body: string,
     readonly headers: Record<string, string>,
+    /** `Set-Cookie` header values: one entry per cookie (they cannot be joined into one header). */
+    readonly cookies: string[] = [],
   ) {}
 }
 

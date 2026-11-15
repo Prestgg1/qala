@@ -3,11 +3,14 @@ import { DomainError, HttpError, NotFoundError, ValidationError } from "../error
 import { Logger } from "../log";
 import type { Issue, SchemaNode } from "../schema";
 import type { ActionDef, RuntimeInput } from "./action";
+import { readBody } from "./body";
 import { Context, RequestData, splitUrl } from "./context";
 import type { ControllerDef } from "./controller";
 import { compose, type Middleware } from "./middleware";
 import { json, Reply } from "./reply";
 import { joinPath, Router } from "./router";
+import { StreamReply } from "./stream";
+import type { WsHandlers } from "./websocket";
 
 /** One controller file, as found by the builder (`.qala/routes.gen.ts`). */
 export type ControllerEntry = { name: string; prefix: string; controller: ControllerDef };
@@ -116,17 +119,63 @@ export class App {
       reply = await this.errorReply(error, ctx);
     }
     const headerNames = Object.keys(ctx.responseHeaders);
-    if (headerNames.length === 0) return reply;
+    if (headerNames.length === 0 && ctx.responseCookies.length === 0) return reply;
     const headers: Record<string, string> = {};
     for (const key of headerNames) headers[key] = ctx.responseHeaders[key]!;
     for (const key of Object.keys(reply.headers)) headers[key] = reply.headers[key]!;
-    return new Reply(reply.status, reply.body, headers);
+    const cookies = [...reply.cookies, ...ctx.responseCookies];
+    if (reply instanceof StreamReply) return new StreamReply(reply.status, headers, reply.start, cookies);
+    return new Reply(reply.status, reply.body, headers, cookies);
+  }
+
+  /** Whether any controller declares a WebSocket route. */
+  hasWebSockets(): boolean {
+    for (const r of this.routes) if (r.method === "WS") return true;
+    return false;
+  }
+
+  /**
+   * Decides a WebSocket upgrade: the request runs through the global and the route's middleware (auth, CORS) and,
+   * if they let it through, the route's handlers are returned with the request context; otherwise the reply to send.
+   */
+  async upgrade(request: RequestData): Promise<Upgrade> {
+    const { path, query } = splitUrl(request.url);
+    const ctx = new Context(request, path, this.container);
+    ctx.query = query;
+    const match = this.router.find("WS", path);
+    const accepted: { handlers: WsHandlers | null } = { handlers: null };
+    let reply: Reply;
+    try {
+      if (match === null) throw new NotFoundError(`No WebSocket route for ${path}`);
+      const route = this.routes[match.route]!;
+      ctx.params = match.params;
+      const handlers = route.def.socket;
+      reply = await compose(this.middleware, ctx, () =>
+        compose(route.middleware, ctx, async () => {
+          accepted.handlers = handlers;
+          return new Reply(101, "", {});
+        }),
+      );
+    } catch (error) {
+      accepted.handlers = null;
+      reply = await this.errorReply(error, ctx);
+    }
+    const handlers = accepted.handlers;
+    if (handlers !== null && reply.status === 101) return new Upgrade(handlers, ctx, null);
+    const headers: Record<string, string> = {};
+    for (const key of Object.keys(ctx.responseHeaders)) headers[key] = ctx.responseHeaders[key]!;
+    for (const key of Object.keys(reply.headers)) headers[key] = reply.headers[key]!;
+    return new Upgrade(null, ctx, new Reply(reply.status, reply.body, headers, [...reply.cookies, ...ctx.responseCookies]));
   }
 
   private async dispatch(ctx: Context): Promise<Reply> {
     const match = this.router.find(ctx.method === "HEAD" ? "GET" : ctx.method, ctx.path);
     if (match === null) {
-      const allowed = this.router.methodsFor(ctx.path);
+      const allowed = this.router.methodsFor(ctx.path).filter((m) => m !== "WS");
+      if (allowed.length === 0 && this.router.find("WS", ctx.path) !== null) {
+        ctx.setHeader("upgrade", "websocket");
+        throw new HttpError(426, "WebSocket upgrade required", "upgrade_required");
+      }
       if (allowed.length > 0) {
         ctx.setHeader("allow", allowed.join(", "));
         throw new HttpError(405, `Method ${ctx.method} not allowed`, "method_not_allowed");
@@ -139,10 +188,14 @@ export class App {
   }
 
   private async run(def: ActionDef, ctx: Context): Promise<Reply> {
-    const input: RuntimeInput = { params: ctx.params, query: ctx.query, body: undefined, ctx };
+    const input: RuntimeInput = { params: ctx.params, query: ctx.query, body: undefined, files: [], ctx };
     if (def.params !== null) input.params = check(def.params, ctx.params, true, "route parameters");
     if (def.query !== null) input.query = check(def.query, ctx.query, true, "query");
-    if (def.body !== null) input.body = check(def.body, readBody(ctx), false, "body");
+    if (def.body !== null || def.multipart !== null) {
+      const parsed = readBody(ctx, def.multipart);
+      input.files = parsed.files;
+      input.body = def.body === null ? parsed.value : check(def.body, parsed.value, parsed.form, "body");
+    }
     return def.handler(input);
   }
 
@@ -178,16 +231,13 @@ function check(schema: SchemaNode, value: unknown, coerce: boolean, where: strin
   return out;
 }
 
-function readBody(ctx: Context): unknown {
-  const raw = ctx.request.body;
-  if (raw === "") return undefined;
-  const type = ctx.header("content-type") ?? "";
-  if (type !== "" && !type.includes("json")) throw new HttpError(415, "Expected a JSON body (content-type: application/json)", "unsupported_media_type");
-  try {
-    return JSON.parse(raw) as unknown;
-  } catch {
-    throw new HttpError(400, "The body is not valid JSON", "invalid_json");
-  }
+/** The outcome of `App.upgrade`: accepted (`handlers`) or refused (`reply`). */
+export class Upgrade {
+  constructor(
+    readonly handlers: WsHandlers | null,
+    readonly ctx: Context,
+    readonly reply: Reply | null,
+  ) {}
 }
 
 export function createApp(options: AppOptions): App {

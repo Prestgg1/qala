@@ -12,7 +12,7 @@ export const RESOURCE: Record<string, [string, string]> = {
   destroy: ["DELETE", "/:id"],
 };
 
-const VERBS: Record<string, string> = { get: "GET", post: "POST", put: "PUT", patch: "PATCH", del: "DELETE" };
+const VERBS: Record<string, string> = { get: "GET", post: "POST", put: "PUT", patch: "PATCH", del: "DELETE", ws: "WS" };
 
 export type ActionInfo = { name: string; method: string; path: string; line: number };
 
@@ -118,7 +118,7 @@ export function parseController(root: string, controllersDir: string, file: stri
     const name = propertyName(assignment.name);
     if (name === null) fail(prop, "action names must be plain identifiers");
     const init = assignment.initializer;
-    if (!ts.isCallExpression(init) || !ts.isIdentifier(init.expression)) return fail(init, `action "${name}" must be action(...) or get/post/put/patch/del("/path", ...)`);
+    if (!ts.isCallExpression(init) || !ts.isIdentifier(init.expression)) return fail(init, `action "${name}" must be action(...) or get/post/put/patch/del/ws("/path", ...)`);
     const helper = init.expression.text;
     if (helper === "action") {
       const conventional = RESOURCE[name!];
@@ -127,7 +127,7 @@ export function parseController(root: string, controllersDir: string, file: stri
       continue;
     }
     const method = VERBS[helper];
-    if (method === undefined) fail(init, `action "${name}" uses ${helper}(); expected action/get/post/put/patch/del`);
+    if (method === undefined) fail(init, `action "${name}" uses ${helper}(); expected action/get/post/put/patch/del/ws`);
     const pathArg = init.arguments[0];
     if (pathArg === undefined || !(ts.isStringLiteral(pathArg) || ts.isNoSubstitutionTemplateLiteral(pathArg))) {
       fail(init, `${helper}() for "${name}" needs a string-literal path as its first argument`);

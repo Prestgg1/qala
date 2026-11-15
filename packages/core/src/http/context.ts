@@ -1,16 +1,46 @@
 import type { Container, Token } from "../container";
+import { parseCookies, serializeCookie, type CookieOptions } from "./cookie";
+import { decodeUtf8 } from "./multipart";
 
-/** One incoming request as the framework sees it (independent of the HTTP server underneath). */
+/**
+ * One incoming request as the framework sees it (independent of the HTTP server underneath).
+ * The body is kept as bytes (`raw`) and decoded to text (`body`) only when asked for, so binary
+ * uploads are never decoded as UTF-8. Pass the text, or `""` plus the bytes as `raw`.
+ */
 export class RequestData {
+  private text: string | null;
+  private bytes: Uint8Array | null;
+
   constructor(
     readonly method: string,
     /** Path and query string, e.g. `/tasks?done=true`. */
     readonly url: string,
     /** Lower-cased header names. */
     readonly headers: Record<string, string>,
-    readonly body: string,
+    body: string,
     readonly ip: string,
-  ) {}
+    raw: Uint8Array | null = null,
+  ) {
+    this.bytes = raw;
+    this.text = raw === null ? body : null;
+  }
+
+  /** The body decoded as UTF-8 (decoded on first use). */
+  get body(): string {
+    if (this.text === null) this.text = decodeUtf8(this.bytes!);
+    return this.text;
+  }
+
+  /** The body bytes, exactly as received. */
+  get raw(): Uint8Array {
+    if (this.bytes === null) this.bytes = new Uint8Array(Buffer.from(this.text!, "utf8"));
+    return this.bytes;
+  }
+
+  /** Whether the body is empty (without decoding it). */
+  get empty(): boolean {
+    return this.bytes === null ? this.text === "" : this.bytes.length === 0;
+  }
 }
 
 /**
@@ -23,6 +53,9 @@ export class Context {
   query: Record<string, string> = {};
   /** Response headers added by middleware or handlers. */
   readonly responseHeaders: Record<string, string> = {};
+  /** `Set-Cookie` header values added by middleware or handlers (one entry per cookie). */
+  readonly responseCookies: string[] = [];
+  private cookies: Record<string, string> | null = null;
   private readonly store = new Map<string, unknown>();
   readonly startedAt = Date.now();
 
@@ -60,6 +93,28 @@ export class Context {
 
   get(key: string): unknown {
     return this.store.get(key);
+  }
+
+  /** A request cookie by name (from the `Cookie` header), or `undefined`. */
+  cookie(name: string): string | undefined {
+    if (this.cookies === null) this.cookies = parseCookies(this.header("cookie") ?? "");
+    return this.cookies[name];
+  }
+
+  /** All request cookies. */
+  allCookies(): Record<string, string> {
+    if (this.cookies === null) this.cookies = parseCookies(this.header("cookie") ?? "");
+    return this.cookies;
+  }
+
+  /** Adds a `Set-Cookie` header to the response; several cookies are sent as several headers. */
+  setCookie(name: string, value: string, options: CookieOptions = {}): void {
+    this.responseCookies.push(serializeCookie(name, value, options));
+  }
+
+  /** Expires a cookie in the browser (pass the same `path`/`domain` it was set with). */
+  clearCookie(name: string, options: CookieOptions = {}): void {
+    this.responseCookies.push(serializeCookie(name, "", { path: options.path, domain: options.domain, httpOnly: options.httpOnly, secure: options.secure, sameSite: options.sameSite, maxAge: 0, expires: new Date(0) }));
   }
 
   setHeader(name: string, value: string): void {

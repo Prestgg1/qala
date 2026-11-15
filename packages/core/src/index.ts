@@ -16,8 +16,19 @@ export { Logger, type LogLevel } from "./log";
 export { Database, Transaction, Table, TableEngine, ident, type DatabaseOptions, type FindOptions, type Direction, type RunSql, type RunRaw, type RunBatch } from "./db/database";
 export { model, ModelDef, snakeCase, toIso, pgIso, type RowDecoder, type Model, type InferModel, type ModelOptions } from "./db/model";
 export { migrate, splitStatements, type MigrationFile } from "./db/migrate";
-export { DatabaseError, parseUrl, Pool, Connection, QueryResult, RawResult, ConnectionStats, type PipelineItem, type DbValue, type DbRow, type ConnectionConfig } from "./db/pg";
+export { DatabaseError, parseUrl, Pool, Connection, QueryResult, RawResult, ConnectionStats, Listener, Subscription, type PipelineItem, type DbValue, type DbRow, type ConnectionConfig } from "./db/pg";
+// mail
+export { SmtpClient, SmtpError, SendResult, buildMessage, parseAddress, encodeWords, quotedPrintable, dotStuff, type SmtpOptions, type MailMessage } from "./mail/smtp";
 // cluster
 export { resolveWorkers, isWorker, startWorkers, watchParent, WORKER_ENV } from "./http/cluster";
 // orm (run time: compiled queries from .qala/queries.gen.ts; the builder lives in @qala/core/query)
 export { run, batch, step, compiled, pgArray, groupPush, CompiledQuery, QueryStep, type Query, type QueryParamsOf, type QueryResultOf, type BatchEntry, type BatchRunner, type ParamMapper, type Assembler } from "./orm/runtime";
+// body
+export { parseMultipart, isMultipart, multipartBoundary, decodeUtf8, UploadedFile, MultipartForm, MultipartLimits } from "./http/multipart";
+export { parseCookies, serializeCookie, type CookieOptions } from "./http/cookie";
+export { readBody, ParsedBody } from "./http/body";
+// stream
+export { stream, sse, StreamReply, StreamSink, StreamWriter, SseWriter, type SseEvent, type StreamOptions } from "./http/stream";
+// websocket
+export { ws, WsSocket, WsHandlers, WsSender, WsConnection, WsTransport, encodeFrame, acceptKey, type WsRoute } from "./http/websocket";
+export { Upgrade } from "./http/app";

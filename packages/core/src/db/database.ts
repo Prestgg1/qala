@@ -1,6 +1,6 @@
 import { NotFoundError } from "../errors";
 import type { Model, ModelDef } from "./model";
-import { type Connection, type DbRow, type DbValue, parseUrl, type PipelineItem, Pool, type QueryResult, type RawResult } from "./pg";
+import { type Connection, type ConnectionConfig, type DbRow, type DbValue, Listener, parseUrl, type PipelineItem, Pool, type QueryResult, type RawResult, type Subscription } from "./pg";
 
 /** Runs SQL: the pool (Database) or one checked-out connection (Transaction). */
 export type RunSql = (sql: string, params: DbValue[]) => Promise<QueryResult>;
@@ -269,11 +269,14 @@ export type DatabaseOptions = { max?: number };
  */
 export class Database {
   private readonly pool: Pool;
+  private readonly config: ConnectionConfig;
+  private listener: Listener | null = null;
   private readonly runPool: RunSql;
   private readonly runPoolRaw: RunRaw;
 
   constructor(url: string, options: DatabaseOptions = {}) {
-    this.pool = new Pool(parseUrl(url), options.max ?? 10);
+    this.config = parseUrl(url);
+    this.pool = new Pool(this.config, options.max ?? 10);
     this.runPool = (sql, params) => this.pool.query(sql, params);
     this.runPoolRaw = (sql, params) => this.pool.queryRaw(sql, params);
   }
@@ -326,8 +329,32 @@ export class Database {
     }
   }
 
-  /** Closes idle connections (call on shutdown). */
+  /**
+   * LISTEN on `channel`: `handler` gets the payload of every NOTIFY. All channels share one dedicated
+   * connection that reconnects (with backoff) and listens again after it drops; notifications sent while
+   * it was down are lost. Call `unlisten()` on the result to stop.
+   */
+  listen(channel: string, handler: (payload: string) => void): Promise<Subscription> {
+    if (this.listener === null) this.listener = new Listener(this.config);
+    return this.listener.listen(channel, handler);
+  }
+
+  /** `NOTIFY channel, payload` (via `pg_notify`, so both are parameters). Payloads are limited to 8000 bytes. */
+  async notify(channel: string, payload: string = ""): Promise<void> {
+    await this.pool.query("select pg_notify($1, $2)", [channel, payload]);
+  }
+
+  /** Backend pid of the listener connection (0 if none), e.g. for `pg_terminate_backend` in tests. */
+  listenerPid(): number {
+    return this.listener === null ? 0 : this.listener.pid;
+  }
+
+  /** Closes idle connections and the listener (call on shutdown). */
   close(): void {
+    if (this.listener !== null) {
+      this.listener.close();
+      this.listener = null;
+    }
     this.pool.close();
   }
 }

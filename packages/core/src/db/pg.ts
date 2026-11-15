@@ -172,6 +172,13 @@ export class Connection {
   private pendingCloses: string[] = [];
   readonly stats = new ConnectionStats();
   closed = false;
+  /** Backend process id (from BackendKeyData); 0 until connected. */
+  processId = 0;
+  /** Called for every NotificationResponse (LISTEN/NOTIFY), whenever it arrives. */
+  onNotification: (channel: string, payload: string) => void = () => {};
+  /** Called once when the connection is gone (error, server shutdown, terminate, close()). */
+  onClosed: () => void = () => {};
+  private closeReported = false;
 
   constructor(private readonly config: ConnectionConfig) {
     this.ready = new Promise<void>((resolve, reject) => {
@@ -322,6 +329,10 @@ export class Connection {
     this.closed = true;
     if (!this.authenticated) this.onFail(err);
     while (this.queue.length > 0) this.queue.shift()!.reject(err);
+    if (!this.closeReported) {
+      this.closeReported = true;
+      this.onClosed();
+    }
   }
 
   private receive(chunk: Buffer): void {
@@ -338,6 +349,17 @@ export class Connection {
 
   private handle(type: string, body: Buffer): void {
     if (type === "R") return this.auth(body);
+    if (type === "A") {
+      // NotificationResponse: int32 pid, channel\0, payload\0. Asynchronous: may arrive between any messages.
+      const channelEnd = body.indexOf(0, 4);
+      const payloadEnd = body.indexOf(0, channelEnd + 1);
+      this.onNotification(body.toString("utf8", 4, channelEnd), body.toString("utf8", channelEnd + 1, payloadEnd));
+      return;
+    }
+    if (type === "K") {
+      this.processId = body.readInt32BE(0);
+      return;
+    }
     if (type === "T") {
       const current = this.queue[0]!;
       const count = body.readInt16BE(0);
@@ -548,5 +570,168 @@ export class Pool {
   close(): void {
     for (const c of this.idle) c.close();
     this.idle.length = 0;
+  }
+}
+
+/** Handle returned by `listen`; `unlisten` removes this handler (and the LISTEN once no handler is left). */
+export class Subscription {
+  private active = true;
+  constructor(
+    private readonly owner: Listener,
+    private readonly channel: string,
+    private readonly handler: (payload: string) => void,
+  ) {}
+
+  async unlisten(): Promise<void> {
+    if (!this.active) return;
+    this.active = false;
+    await this.owner.remove(this.channel, this.handler);
+  }
+}
+
+function quoteChannel(name: string): string {
+  return `"${name.replace(/"/g, '""')}"`;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+/**
+ * LISTEN/NOTIFY on one dedicated connection (never taken from the pool, since LISTEN is per session).
+ * Several channels share it. If the connection drops it reconnects with exponential backoff
+ * (`minDelay` doubling up to `maxDelay`) and runs LISTEN again for every channel that still has a handler.
+ * Notifications sent while the connection was down are lost (that is how PostgreSQL works).
+ */
+export class Listener {
+  private readonly handlers = new Map<string, ((payload: string) => void)[]>();
+  private connection: Connection | null = null;
+  private connecting: Promise<void> | null = null;
+  private reconnecting = false;
+  private stopped = false;
+  /** Backend pid of the current listener connection (0 while disconnected). */
+  pid = 0;
+
+  constructor(
+    private readonly config: ConnectionConfig,
+    private readonly minDelay: number = 100,
+    private readonly maxDelay: number = 5000,
+  ) {}
+
+  async listen(channel: string, handler: (payload: string) => void): Promise<Subscription> {
+    this.stopped = false;
+    const existing = this.handlers.get(channel);
+    const isNew = existing === undefined;
+    if (existing === undefined) this.handlers.set(channel, [handler]);
+    else existing.push(handler);
+    try {
+      if (this.connection === null || this.connection.closed) {
+        // first use: connect (throws if impossible); while a reconnect loop runs it LISTENs on success
+        if (!this.reconnecting) await this.connect();
+      } else if (isNew) {
+        await this.connection.query(`listen ${quoteChannel(channel)}`, []);
+      }
+    } catch (err) {
+      await this.remove(channel, handler);
+      throw err;
+    }
+    return new Subscription(this, channel, handler);
+  }
+
+  async remove(channel: string, handler: (payload: string) => void): Promise<void> {
+    const list = this.handlers.get(channel);
+    if (list === undefined) return;
+    const at = list.indexOf(handler);
+    if (at >= 0) list.splice(at, 1);
+    if (list.length > 0) return;
+    this.handlers.delete(channel);
+    const c = this.connection;
+    if (this.handlers.size === 0) {
+      this.close();
+    } else if (c !== null && !c.closed) {
+      try {
+        await c.query(`unlisten ${quoteChannel(channel)}`, []);
+      } catch {
+        // the connection dropped; the reconnect only listens to channels that still have handlers
+      }
+    }
+  }
+
+  /** Stops listening and closes the connection. */
+  close(): void {
+    this.stopped = true;
+    const c = this.connection;
+    this.connection = null;
+    this.pid = 0;
+    this.handlers.clear();
+    if (c !== null) c.close();
+  }
+
+  private connect(): Promise<void> {
+    if (this.connecting !== null) return this.connecting;
+    const attempt = this.open();
+    this.connecting = attempt;
+    const clear = (): void => {
+      this.connecting = null;
+    };
+    attempt.then(clear, clear);
+    return attempt;
+  }
+
+  private async open(): Promise<void> {
+    const c = new Connection(this.config);
+    c.onNotification = (channel, payload) => this.dispatch(channel, payload);
+    await c.open();
+    try {
+      for (const channel of this.handlers.keys()) await c.query(`listen ${quoteChannel(channel)}`, []);
+    } catch (err) {
+      c.close();
+      throw err;
+    }
+    if (this.stopped) {
+      c.close();
+      return;
+    }
+    this.connection = c;
+    this.pid = c.processId;
+    c.onClosed = () => this.dropped(c);
+    if (c.closed) this.dropped(c);
+  }
+
+  private dispatch(channel: string, payload: string): void {
+    const list = this.handlers.get(channel);
+    if (list === undefined) return;
+    for (const handler of list.slice()) {
+      try {
+        handler(payload);
+      } catch {
+        // a failing handler must not break the connection or the other handlers
+      }
+    }
+  }
+
+  private dropped(c: Connection): void {
+    if (this.connection !== c || this.stopped) return;
+    this.connection = null;
+    this.pid = 0;
+    if (!this.reconnecting) this.reconnect();
+  }
+
+  private async reconnect(): Promise<void> {
+    this.reconnecting = true;
+    let delay = this.minDelay;
+    while (!this.stopped && this.handlers.size > 0) {
+      await sleep(delay);
+      if (this.stopped) break;
+      try {
+        await this.connect();
+        if (this.connection !== null) break;
+      } catch {
+        delay = Math.min(delay * 2, this.maxDelay);
+      }
+    }
+    this.reconnecting = false;
   }
 }
