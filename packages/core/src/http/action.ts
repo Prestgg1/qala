@@ -20,7 +20,9 @@ export type InputSchemas = {
 type ParamsOf<I, Default> = I extends { params: infer P extends Shape } ? InferShape<P> : Default;
 /** Without a query schema the handler sees the raw query string values (honest: scriptc checks it at run time). */
 type QueryOf<I> = I extends { query: infer Q extends Shape } ? InferShape<Q> : Record<string, string>;
-type BodyOf<I> = I extends { body: infer B extends SchemaNode } ? Infer<B> : undefined;
+// Without a body schema an upload action still receives the raw multipart fields (or any JSON body),
+// so its body is `unknown` (honest for scriptc's run-time type checks); other actions get `undefined`.
+type BodyOf<I> = I extends { body: infer B extends SchemaNode } ? Infer<B> : I extends { files: true | object } ? unknown : undefined;
 
 /** The validated input a handler receives, plus the raw request context as `ctx`. */
 export type Input<I, DefaultParams> = {
