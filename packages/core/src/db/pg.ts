@@ -1,7 +1,8 @@
 /**
  * A PostgreSQL client written for scriptc's static subset (wire protocol v3 over node:net):
  * SCRAM-SHA-256 / cleartext / trust auth, the extended query protocol with text parameters,
- * and a pool with exclusive checkout (so transactions keep their connection).
+ * automatic prepared statements (an LRU cache per connection), pipelining, and a pool with
+ * exclusive checkout (so transactions keep their connection).
  */
 import { connect, type Socket } from "node:net";
 import { createHash, createHmac, pbkdf2Sync, randomBytes } from "node:crypto";
@@ -78,6 +79,31 @@ class Column {
   ) {}
 }
 
+/** A server-side prepared statement this connection created for one SQL text. */
+class Statement {
+  /** Result columns, from `Describe` on first use; null until it arrives. */
+  columns: Column[] | null = null;
+  constructor(readonly name: string) {}
+}
+
+/** One SQL command to run in a pipeline. */
+export type PipelineItem = { text: string; params: DbValue[] };
+
+/** Counters for tests and diagnostics. */
+export class ConnectionStats {
+  /** Parse messages sent (named or unnamed). */
+  parses = 0;
+  /** Commands executed (Execute messages sent). */
+  executes = 0;
+  /** Prepared statements closed after LRU eviction or an error. */
+  closes = 0;
+  /** Commands retried unprepared after 26000 / "cached plan must not change result type". */
+  retries = 0;
+}
+
+/** Most prepared statements kept per connection. */
+const STATEMENT_CACHE_SIZE = 256;
+
 class Pending {
   rows: DbRow[] = [];
   /** Text values per column, in select-list order (raw mode). */
@@ -85,8 +111,16 @@ class Pending {
   columns: Column[] = [];
   error: DatabaseError | null = null;
   affected = 0;
+  /** The cached statement this command used ("" when unprepared). */
+  statementName = "";
+  /** The statement was reused from the cache (no Parse sent for this command). */
+  reused = false;
+  /** Already retried once unprepared. */
+  retried = false;
   constructor(
     readonly raw: boolean,
+    readonly text: string,
+    readonly params: DbValue[],
     readonly resolve: (result: QueryResult) => void,
     readonly resolveRaw: (result: RawResult) => void,
     readonly reject: (err: Error) => void,
@@ -131,6 +165,12 @@ export class Connection {
   private nonce = "";
   private serverSignature = "";
   private authenticated = false;
+  /** SQL text → prepared statement; Map order is LRU order (oldest first). */
+  private readonly statements = new Map<string, Statement>();
+  private statementSeq = 0;
+  /** Statements to close, sent in front of the next command. */
+  private pendingCloses: string[] = [];
+  readonly stats = new ConnectionStats();
   closed = false;
 
   constructor(private readonly config: ConnectionConfig) {
@@ -163,8 +203,8 @@ export class Connection {
   query(text: string, params: DbValue[]): Promise<QueryResult> {
     if (this.closed) return Promise.reject(new Error("Database connection closed"));
     return new Promise<QueryResult>((resolve, reject) => {
-      this.queue.push(new Pending(false, resolve, () => {}, reject));
-      this.send(text, params);
+      const pending = new Pending(false, text, params, resolve, () => {}, reject);
+      this.socket.write(Buffer.concat(this.enqueue(pending, true)));
     });
   }
 
@@ -172,28 +212,110 @@ export class Connection {
   queryRaw(text: string, params: DbValue[]): Promise<RawResult> {
     if (this.closed) return Promise.reject(new Error("Database connection closed"));
     return new Promise<RawResult>((resolve, reject) => {
-      this.queue.push(new Pending(true, () => {}, resolve, reject));
-      this.send(text, params);
+      const pending = new Pending(true, text, params, () => {}, resolve, reject);
+      this.socket.write(Buffer.concat(this.enqueue(pending, true)));
     });
   }
 
-  private send(text: string, params: DbValue[]): void {
-    const bind: Buffer[] = [cstr(""), cstr(""), int16(0), int16(params.length)];
-    for (const p of params) {
+  /**
+   * Runs several commands in one round trip: every message goes out in a single socket write, with a
+   * Sync after each command, so each command succeeds or fails on its own (outside a transaction each is
+   * its own implicit transaction). Results come back in order. If any command fails, the call rejects
+   * with the first failed command's `DatabaseError`, but only after every response has arrived, so the
+   * connection stays usable.
+   */
+  async pipeline(items: PipelineItem[]): Promise<RawResult[]> {
+    if (this.closed) throw new Error("Database connection closed");
+    const results: RawResult[] = [];
+    const settled: Promise<void>[] = [];
+    const buffers: Buffer[] = [];
+    let failure: Error | null = null;
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i]!;
+      results.push(new RawResult([], 0));
+      const done = new Promise<RawResult>((resolve, reject) => {
+        const pending = new Pending(true, item.text, item.params, () => {}, resolve, reject);
+        for (const b of this.enqueue(pending, true)) buffers.push(b);
+      });
+      settled.push(
+        done.then(
+          (r) => {
+            results[i] = r;
+          },
+          (e: Error) => {
+            if (failure === null) failure = e;
+          },
+        ),
+      );
+    }
+    this.socket.write(Buffer.concat(buffers));
+    await Promise.all(settled);
+    if (failure !== null) throw failure;
+    return results;
+  }
+
+  /** Queues `pending` and returns the messages for it (Close of evicted statements first). */
+  private enqueue(pending: Pending, prepare: boolean): Buffer[] {
+    const out: Buffer[] = [];
+    for (const name of this.pendingCloses) {
+      out.push(message("C", Buffer.concat([Buffer.from("S", "latin1"), cstr(name)])));
+      this.stats.closes++;
+    }
+    this.pendingCloses = [];
+    let statement = "";
+    if (prepare) {
+      const cached = this.statements.get(pending.text);
+      if (cached !== undefined) {
+        // refresh LRU position
+        this.statements.delete(pending.text);
+        this.statements.set(pending.text, cached);
+        statement = cached.name;
+        pending.reused = true;
+        if (cached.columns !== null) pending.columns = cached.columns;
+      } else {
+        if (this.statements.size >= STATEMENT_CACHE_SIZE) {
+          for (const [oldText, old] of this.statements) {
+            this.statements.delete(oldText);
+            out.push(message("C", Buffer.concat([Buffer.from("S", "latin1"), cstr(old.name)])));
+            this.stats.closes++;
+            break;
+          }
+        }
+        this.statementSeq++;
+        statement = `q${this.statementSeq}`;
+        this.statements.set(pending.text, new Statement(statement));
+        out.push(message("P", Buffer.concat([cstr(statement), cstr(pending.text), int16(0)])));
+        out.push(message("D", Buffer.concat([Buffer.from("S", "latin1"), cstr(statement)])));
+        this.stats.parses++;
+      }
+    } else {
+      out.push(message("P", Buffer.concat([cstr(""), cstr(pending.text), int16(0)])));
+      this.stats.parses++;
+    }
+    pending.statementName = statement;
+    const bind: Buffer[] = [cstr(""), cstr(statement), int16(0), int16(pending.params.length)];
+    for (const p of pending.params) {
       const v = encode(p);
       if (v === null) bind.push(int32(-1));
       else bind.push(int32(v.length), v);
     }
     bind.push(int16(0));
-    this.socket.write(
-      Buffer.concat([
-        message("P", Buffer.concat([cstr(""), cstr(text), int16(0)])),
-        message("B", Buffer.concat(bind)),
-        message("D", Buffer.concat([Buffer.from("P", "latin1"), cstr("")])),
-        message("E", Buffer.concat([cstr(""), int32(0)])),
-        message("S", Buffer.alloc(0)),
-      ]),
-    );
+    out.push(message("B", Buffer.concat(bind)));
+    if (statement === "") out.push(message("D", Buffer.concat([Buffer.from("P", "latin1"), cstr("")])));
+    out.push(message("E", Buffer.concat([cstr(""), int32(0)])));
+    out.push(message("S", Buffer.alloc(0)));
+    this.stats.executes++;
+    this.queue.push(pending);
+    return out;
+  }
+
+  /** Forgets the cached statement for `text` (if it is still `name`) and closes it with the next command. */
+  private dropStatement(text: string, name: string): void {
+    const cached = this.statements.get(text);
+    if (cached !== undefined && cached.name === name) {
+      this.statements.delete(text);
+      this.pendingCloses.push(name);
+    }
   }
 
   private fail(err: Error): void {
@@ -228,6 +350,10 @@ export class Connection {
         current.columns.push(new Column(name, body.readInt32BE(at + 6)));
         at += 18;
       }
+      if (current.statementName !== "" && !current.reused) {
+        const cached = this.statements.get(current.text);
+        if (cached !== undefined && cached.name === current.statementName) cached.columns = current.columns;
+      }
       return;
     }
     if (type === "D") {
@@ -248,6 +374,11 @@ export class Connection {
         }
         current.rawRows.push(values);
         return;
+      }
+      if (current.columns.length < count && current.statementName !== "") {
+        // a reused statement whose Describe answer arrived after this command was queued (same pipeline)
+        const cached = this.statements.get(current.text);
+        if (cached !== undefined && cached.columns !== null) current.columns = cached.columns;
       }
       const row: DbRow = {};
       for (let i = 0; i < count; i++) {
@@ -288,8 +419,20 @@ export class Connection {
       }
       const done = this.queue.shift();
       if (done === undefined) return;
-      if (done.error !== null) done.reject(done.error);
-      else if (done.raw) done.resolveRaw(new RawResult(done.rawRows, done.affected));
+      if (done.error !== null) {
+        const err = done.error;
+        if (done.statementName !== "") this.dropStatement(done.text, done.statementName);
+        const stale = err.code === "26000" || (err.code === "0A000" && err.message.includes("cached plan"));
+        if (stale && done.statementName !== "" && !done.retried) {
+          // the cached statement is gone or its result type changed: run it once more, unprepared
+          const retry = new Pending(done.raw, done.text, done.params, done.resolve, done.resolveRaw, done.reject);
+          retry.retried = true;
+          this.stats.retries++;
+          this.socket.write(Buffer.concat(this.enqueue(retry, false)));
+          return;
+        }
+        done.reject(err);
+      } else if (done.raw) done.resolveRaw(new RawResult(done.rawRows, done.affected));
       else done.resolve(new QueryResult(done.rows, done.affected));
     }
   }
@@ -387,6 +530,16 @@ export class Pool {
     const c = await this.acquire();
     try {
       return await c.queryRaw(text, params);
+    } finally {
+      this.release(c);
+    }
+  }
+
+  /** Runs `items` in one round trip on one connection (see `Connection.pipeline`). */
+  async pipeline(items: PipelineItem[]): Promise<RawResult[]> {
+    const c = await this.acquire();
+    try {
+      return await c.pipeline(items);
     } finally {
       this.release(c);
     }

@@ -1,11 +1,13 @@
 import { NotFoundError } from "../errors";
 import type { Model, ModelDef } from "./model";
-import { type Connection, type DbRow, type DbValue, parseUrl, Pool, type QueryResult, type RawResult } from "./pg";
+import { type Connection, type DbRow, type DbValue, parseUrl, type PipelineItem, Pool, type QueryResult, type RawResult } from "./pg";
 
 /** Runs SQL: the pool (Database) or one checked-out connection (Transaction). */
 export type RunSql = (sql: string, params: DbValue[]) => Promise<QueryResult>;
 /** Runs SQL and returns rows as text values per column (see `RawResult`). */
 export type RunRaw = (sql: string, params: DbValue[]) => Promise<RawResult>;
+/** Runs several commands in one round trip (pipelining); results in order. */
+export type RunBatch = (items: PipelineItem[]) => Promise<RawResult[]>;
 
 /** Quotes an identifier: `"user"`. */
 export function ident(name: string): string {
@@ -235,7 +237,13 @@ export class Transaction {
   constructor(
     private readonly run: RunSql,
     private readonly runRaw: RunRaw,
+    private readonly runBatch: RunBatch,
   ) {}
+
+  /** Several commands in one round trip on the transaction's connection (see `Database.batchRaw`). */
+  batchRaw(items: PipelineItem[]): Promise<RawResult[]> {
+    return this.runBatch(items);
+  }
 
   async query(sql: string, params: DbValue[] = []): Promise<DbRow[]> {
     return (await this.run(sql, params)).rows;
@@ -279,6 +287,15 @@ export class Database {
     return (await this.pool.query(sql, params)).affected;
   }
 
+  /**
+   * Runs several commands in one round trip on one pooled connection (pipelining): rows as text values,
+   * results in order. Each command is its own implicit transaction; if any fails, the call rejects with
+   * the first failure after all responses arrived. Use `transaction` + `tx.batchRaw` for all-or-nothing.
+   */
+  batchRaw(items: PipelineItem[]): Promise<RawResult[]> {
+    return this.pool.pipeline(items);
+  }
+
   table<Row, Key extends string>(model: Model<Row, Key>): Table<Row, Key> {
     return new Table<Row, Key>(new TableEngine(model, this.runPool, this.runPoolRaw));
   }
@@ -288,9 +305,10 @@ export class Database {
     const connection: Connection = await this.pool.acquire();
     const run: RunSql = (sql, params) => connection.query(sql, params);
     const runRaw: RunRaw = (sql, params) => connection.queryRaw(sql, params);
+    const runBatch: RunBatch = (items) => connection.pipeline(items);
     try {
       await connection.query("begin", []);
-      const pending: Promise<unknown> = fn(new Transaction(run, runRaw));
+      const pending: Promise<unknown> = fn(new Transaction(run, runRaw, runBatch));
       const result: unknown = await pending;
       await connection.query("commit", []);
       // biome-ignore lint/suspicious/noExplicitAny: scriptc checks `as T` at run time and lowers T=void wrongly; `any` hands the value through

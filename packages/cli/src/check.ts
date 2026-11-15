@@ -74,6 +74,12 @@ export function importsOf(file: string): { spec: string; line: number }[] {
   return out;
 }
 
+/** Whether the import on `line` of `file` is `import type` (erased: it ships no code). */
+function isTypeOnly(file: string, line: number): boolean {
+  const text = readFileSync(file, "utf8").split("\n")[line - 1] ?? "";
+  return /^\s*import\s+type\s/.test(text) || /^\s*export\s+type\s/.test(text);
+}
+
 /** Checks the Clean Architecture dependency rule over every .ts file in app/ and config/. */
 export function checkArchitecture(root: string): { files: number; violations: Violation[] } {
   const files = [...walk(join(root, LAYOUT.app)), ...walk(join(root, "config"))].filter((f) => f.endsWith(".ts") && !f.endsWith(".d.ts"));
@@ -87,6 +93,15 @@ export function checkArchitecture(root: string): { files: number; violations: Vi
         const target = resolveImport(file, spec);
         const targetRel = rel(root, target);
         const targetLayer = layerOf(targetRel);
+        const typeOnly = isTypeOnly(file, line);
+        if (targetRel.startsWith(`${LAYOUT.generated}/queries.gen`) && layer !== "infrastructure") {
+          violations.push({ file: relFile, line, layer, target: targetRel, message: `${layer} imports compiled queries; only app/infrastructure runs SQL (wrap it in a repository)` });
+          continue;
+        }
+        if (targetRel.endsWith(".query.ts") && !typeOnly && !relFile.startsWith("app/infrastructure/queries/")) {
+          violations.push({ file: relFile, line, layer, target: targetRel, message: `query declarations are build-time only; import the compiled query from .qala/queries.gen instead` });
+          continue;
+        }
         if (targetLayer === "root") {
           violations.push({ file: relFile, line, layer, target: targetRel, message: `${layer} imports the composition root ${targetRel}; only .qala/main.ts wires the app` });
         } else if (targetLayer === null) {

@@ -40,9 +40,10 @@ export function scaffold(dir: string, options: NewOptions = {}): string[] {
           noEmit: true,
           types: ["node", "bun"],
           // scriptc compiles @qala/core as part of the app, so it is mapped to its TypeScript source.
-          paths: { "@qala/core": [core] },
+          paths: { "@qala/core": [core], "@qala/core/query": [core.replace(/index\.ts$/, "orm/builder/index.ts")] },
         },
-        include: ["app", "config", ".qala"],
+        // ".qala" alone would not match: TypeScript skips dot-folders unless the glob names files in them.
+        include: ["app", "config", ".qala/**/*.ts"],
       },
       null,
       2,

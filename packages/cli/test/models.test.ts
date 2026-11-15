@@ -37,7 +37,7 @@ function app(files: Record<string, string>): string {
         typeRoots: [join(REPO, "node_modules/@types")],
         paths: { "@qala/core": [CORE] },
       },
-      include: ["app", ".qala"],
+      include: ["app", ".qala/**/*.ts"],
     }),
     "app/http/controllers/health.controller.ts": 'import { action, controller } from "@qala/core";\nexport const HealthController = controller({}, () => ({ index: action({}, () => ({ ok: true })) }));\n',
     ...files,

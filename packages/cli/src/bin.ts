@@ -3,6 +3,7 @@ import { checkArchitecture } from "./check";
 import { generate } from "./codegen";
 import type { SkippedModel } from "./models";
 import { makeController, makeMiddleware, makeMigration, makeModel, makeRepository, makeService, type MakeResult } from "./make";
+import { pullCommand } from "./pull";
 import { build, dev, migrateCommand, start } from "./run";
 import { routeTable, scanControllers } from "./scan";
 import { scaffold } from "./scaffold";
@@ -18,6 +19,8 @@ ${color.bold("Develop")}
   routes                      list every route (METHOD PATH controller.action)
   check                       enforce the Clean Architecture dependency rule
   migrate                     apply database/migrations/*.sql
+  db:pull [--schema public] [--tables a,b] [--out app/domain/schema] [--url postgres://...] [--force]
+                              generate models from an existing PostgreSQL database
 
 ${color.bold("Ship")}
   build [--out dist/app] [--optimization release|speed] [--skip-check]
@@ -56,7 +59,7 @@ function parseArgs(argv: string[]): Args {
   return { positional, flags };
 }
 
-const VALUE_FLAGS = new Set(["out", "optimization", "core"]);
+const VALUE_FLAGS = new Set(["out", "optimization", "core", "schema", "tables", "url"]);
 
 function flag(args: Args, name: string): string | undefined {
   const v = args.flags.get(name);
@@ -110,9 +113,10 @@ export async function main(argv: string[]): Promise<number> {
     }
     case "generate": {
       const root = findRoot();
-      const { written, models, skippedModels } = generate(root);
+      const { written, models, skippedModels, queries } = generate(root);
       for (const f of written) console.log(`${color.green("wrote")} ${f}`);
       printModels(models.length, skippedModels);
+      if (queries > 0) console.log(`${color.green("✓")} ${queries} compiled quer${queries === 1 ? "y" : "ies"}`);
       printRoutes(root);
       return 0;
     }
@@ -138,6 +142,16 @@ export async function main(argv: string[]): Promise<number> {
       return start(findRoot(), flag(args, "out") ?? "dist/app");
     case "migrate":
       return migrateCommand(findRoot());
+    case "db:pull": {
+      let root: string;
+      try {
+        root = findRoot();
+      } catch (error) {
+        if (flag(args, "url") === undefined) throw error;
+        root = process.cwd();
+      }
+      return pullCommand(root, { url: flag(args, "url"), schema: flag(args, "schema"), tables: flag(args, "tables"), out: flag(args, "out"), force });
+    }
     case "make:controller":
       printMake(makeController(findRoot(), needName("tasks --resource"), args.flags.get("resource") === true, force));
       return 0;

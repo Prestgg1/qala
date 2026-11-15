@@ -7,7 +7,8 @@ import { LAYOUT, importPath, pascal, rel, walk } from "./util";
 export type FieldKind = "text" | "number" | "boolean" | "datetime";
 
 /** `literal`: the field's type is a union of string literals (t.enum), so the decoded text is cast to it. */
-export type ModelField = { name: string; kind: FieldKind; nullable: boolean; literal: boolean };
+/** `nullable`: the column may be NULL; `empty` is what the row holds then (`null` for t.nullable, `undefined` for a bare t.optional). */
+export type ModelField = { name: string; kind: FieldKind; nullable: boolean; literal: boolean; empty?: "null" | "undefined" };
 
 export type ModelInfo = {
   /** Absolute file path. */
@@ -99,12 +100,12 @@ function describeModel(call: ts.CallExpression, t: string | null): { table: stri
     if (name === null) return "the shape has a computed key";
     const field = describeField(prop.initializer, t);
     if (typeof field === "string") return `field "${name}": ${field}`;
-    fields.push({ name, kind: field.kind, nullable: field.nullable, literal: field.literal });
+    fields.push({ name, kind: field.kind, nullable: field.nullable, literal: field.literal, empty: field.empty });
   }
   return { table: tableArg.text, fields };
 }
 
-function describeField(expr: ts.Expression, t: string): { kind: FieldKind; nullable: boolean; literal: boolean } | string {
+function describeField(expr: ts.Expression, t: string): { kind: FieldKind; nullable: boolean; literal: boolean; empty: "null" | "undefined" } | string {
   let node = expr;
   while (ts.isParenthesizedExpression(node)) node = node.expression;
   if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression) || !ts.isIdentifier(node.expression.expression) || node.expression.expression.text !== t) {
@@ -116,26 +117,28 @@ function describeField(expr: ts.Expression, t: string): { kind: FieldKind; nulla
     if (inner === undefined) return `${t}.${method}() needs a schema`;
     const described = describeField(inner, t);
     if (typeof described === "string") return described;
-    return { kind: described.kind, nullable: true, literal: described.literal };
+    const empty = method === "nullable" || (described.nullable && described.empty === "null") ? "null" : "undefined";
+    return { kind: described.kind, nullable: true, literal: described.literal, empty };
   }
   const kind = KINDS[method];
   if (kind === undefined) return `${t}.${method}() has no column decoder (only scalar kinds are generated)`;
-  return { kind, nullable: false, literal: method === "enum" };
+  return { kind, nullable: false, literal: method === "enum", empty: "null" };
 }
 
 /** The decoder expression for column `i`. */
 export function fieldExpression(field: ModelField, i: number): string {
   const v = `v[${i}]`;
   const isNull = `${v} === null || ${v} === undefined`;
+  const empty = field.empty ?? "null";
   switch (field.kind) {
     case "text":
-      return field.nullable ? `${v} ?? null` : `${v} ?? ""`;
+      return field.nullable ? `${v} ?? ${empty}` : `${v} ?? ""`;
     case "number":
-      return field.nullable ? `${isNull} ? null : Number(${v})` : `Number(${v})`;
+      return field.nullable ? `${isNull} ? ${empty} : Number(${v})` : `Number(${v})`;
     case "boolean":
-      return field.nullable ? `${isNull} ? null : ${v} === "t"` : `${v} === "t"`;
+      return field.nullable ? `${isNull} ? ${empty} : ${v} === "t"` : `${v} === "t"`;
     case "datetime":
-      return field.nullable ? `${isNull} ? null : pgIso(${v})` : `pgIso(${v} ?? "")`;
+      return field.nullable ? `${isNull} ? ${empty} : pgIso(${v})` : `pgIso(${v} ?? "")`;
   }
 }
 

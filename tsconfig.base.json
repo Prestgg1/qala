@@ -11,6 +11,7 @@
     "types": ["node"],
     "paths": {
       "@qala/core": ["./packages/core/src/index.ts"],
+      "@qala/core/query": ["./packages/core/src/orm/builder/index.ts"],
       "@qala/client": ["./packages/client/src/index.ts"]
     }
   }

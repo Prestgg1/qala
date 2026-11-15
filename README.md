@@ -46,10 +46,13 @@ $ ldd dist/app
 | Errors | One global handler: `HttpError` family (`NotFoundError`, `ConflictError`, …) → status codes, `DomainError` → 422, unknown → 500 + log; optional `onError` hook |
 | Dependency injection | Class tokens like .NET (`singleton(TaskRepository, c => new PgTaskRepository(c.get(Database)))`), abstract classes as interfaces |
 | Models & database | Own PostgreSQL client (SCRAM auth, pool, transactions), `model()` definitions with inferred row types, typed repositories (`db.table(Task).all({ where, orderBy, limit })`, `whereRaw`), generated typed row decoders, raw SQL, migrations |
+| Query compiler (ORM) | Queries declared with a typed builder are compiled by `qala generate` into SQL, prepared statements and generated decoders; relations load without N+1 (one statement per level, all pipelined in one round trip); `batch()` runs independent queries in one round trip — see [docs/orm.md](docs/orm.md) |
+| PostgreSQL client | Automatic prepared statements (per-connection LRU), pipelining, transactions; `qala db:pull` generates models from an existing database |
+| Multi-core | `serve(app, { workers: "auto" })`: one process per core on the same port (SO_REUSEPORT), crash restart, signal forwarding |
 | Middleware | Global (`app/kernel.ts`) or per controller; `cors`, `requestLogger`, `securityHeaders`, `rateLimit` included |
 | Config | `defineConfig(env => ({ port: env.number("PORT", 3000) }))`, `.env` loading, all missing variables reported at startup |
 | Client | `@qala/client`: typed calls, `ApiError` with server details, custom transport (in-process testing) |
-| CLI | `qala new / dev / build / start / generate / routes / check / migrate / make:*` |
+| CLI | `qala new / dev / build / start / generate / routes / check / migrate / db:pull / make:*` |
 
 ## Quick start
 

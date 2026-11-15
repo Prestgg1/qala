@@ -1,4 +1,4 @@
-import type { InferShape, SchemaNode, Shape } from "../schema";
+import type { InferShape, Issue, SchemaNode, Shape } from "../schema";
 import type { DbValue } from "./pg";
 
 /** Turns one row's text values (model field order) into the row object. */
@@ -16,6 +16,8 @@ export class ModelDef {
    * static shape, which scriptc compiles to fast native code; without it a generic decoder is used.
    */
   decoder: RowDecoder | null = null;
+  /** Per field: does a NULL column become `undefined` (a bare `t.optional`) rather than `null`? */
+  private readonly missingIsUndefined: boolean[] = [];
 
   constructor(
     readonly table: string,
@@ -28,7 +30,13 @@ export class ModelDef {
     readonly fields: SchemaNode[],
     /** Field name of the primary key. */
     readonly primaryKey: string,
-  ) {}
+  ) {
+    for (const field of fields) {
+      const issues: Issue[] = [];
+      field.check(null, "", issues, false);
+      this.missingIsUndefined.push(field.optional && issues.length > 0);
+    }
+  }
 
   /** Index of a field name, or -1. */
   indexOf(key: string): number {
@@ -50,10 +58,11 @@ export class ModelDef {
   decodeValues(values: (string | null)[]): unknown {
     const typed = this.decoder;
     if (typed !== null) return typed(values);
-    const out: Record<string, DbValue> = {};
+    const out: Record<string, DbValue | undefined> = {};
     for (let i = 0; i < this.keys.length; i++) {
       const value = values[i];
-      out[this.keys[i]!] = value === null || value === undefined ? null : decodeValue(this.kinds[i]!, value);
+      if (value === null || value === undefined) out[this.keys[i]!] = this.missingIsUndefined[i] === true ? undefined : null;
+      else out[this.keys[i]!] = decodeValue(this.kinds[i]!, value);
     }
     return out;
   }

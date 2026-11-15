@@ -23,7 +23,7 @@
   "include": [
     "app",
     "config",
-    ".qala",
+    ".qala/**/*.ts",
     "web",
     "test",
     "bench"
