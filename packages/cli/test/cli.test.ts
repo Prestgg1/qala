@@ -294,3 +294,21 @@ describe("bin", () => {
     expect(existsSync(join(root, ".qala"))).toBe(false); // routes/check never write
   });
 });
+
+describe("onStart hook", () => {
+  test("main.ts calls kernel.onStart after serve with the primary flag", async () => {
+    const { renderMain } = await import("../src/codegen");
+    const { mkdtempSync, mkdirSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const root = mkdtempSync(join(tmpdir(), "qala-onstart-"));
+    mkdirSync(join(root, "app"), { recursive: true });
+    writeFileSync(join(root, "app/kernel.ts"), "export const kernel = {};\nexport function onStart(): void {}\n");
+    const main = renderMain(root);
+    expect(main).toContain('import { createApp, isWorker, serve } from "@qala/core";');
+    expect(main).toContain("import { kernel, onStart } from");
+    expect(main).toContain("serve(app, { port: Number(process.env.PORT ?? \"3000\") }).then(() => onStart(app, { primary: !isWorker() }));");
+    writeFileSync(join(root, "app/kernel.ts"), "export const kernel = {};\n");
+    expect(renderMain(root)).not.toContain("onStart");
+  });
+});

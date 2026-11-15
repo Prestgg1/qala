@@ -60,8 +60,13 @@ export function renderMain(root: string, hasModels = false): string {
   if (hasConfig) lines.push(`import { config } from "${importPath(dir, join(root, LAYOUT.config))}";`);
   if (hasProviders) lines.push(`import { providers } from "${importPath(dir, join(root, LAYOUT.providers))}";`);
   // `export const serveOptions` in app/kernel.ts (workers, bodyLimit, host) is passed on to serve().
-  const hasServeOptions = hasKernel && /export\s+const\s+serveOptions\b/.test(readFileSync(join(root, LAYOUT.kernel), "utf8"));
-  if (hasKernel) lines.push(`import { kernel${hasServeOptions ? ", serveOptions" : ""} } from "${importPath(dir, join(root, LAYOUT.kernel))}";`);
+  const kernelSource = hasKernel ? readFileSync(join(root, LAYOUT.kernel), "utf8") : "";
+  const hasServeOptions = /export\s+const\s+serveOptions\b/.test(kernelSource);
+  // `export function onStart(app, { primary })` in app/kernel.ts runs once per process after the server listens
+  // (primary is false in worker processes, so once-per-deployment jobs can be limited to the primary).
+  const hasOnStart = /export\s+(async\s+)?function\s+onStart\b|export\s+const\s+onStart\b/.test(kernelSource);
+  if (hasOnStart) lines[1] = 'import { createApp, isWorker, serve } from "@qala/core";';
+  if (hasKernel) lines.push(`import { kernel${hasServeOptions ? ", serveOptions" : ""}${hasOnStart ? ", onStart" : ""} } from "${importPath(dir, join(root, LAYOUT.kernel))}";`);
   lines.push('import { controllers } from "./routes.gen";', "");
   lines.push("const app = createApp({");
   lines.push("  controllers,");
@@ -69,7 +74,8 @@ export function renderMain(root: string, hasModels = false): string {
   if (hasKernel) lines.push("  middleware: kernel.middleware,", "  onError: kernel.onError,", "  exposeErrors: kernel.exposeErrors,");
   lines.push("});", "");
   const port = hasConfig ? "config.port" : 'Number(process.env.PORT ?? "3000")';
-  lines.push(hasServeOptions ? `serve(app, { port: ${port}, ...serveOptions });` : `serve(app, { port: ${port} });`, "");
+  const serveCall = hasServeOptions ? `serve(app, { port: ${port}, ...serveOptions })` : `serve(app, { port: ${port} })`;
+  lines.push(hasOnStart ? `${serveCall}.then(() => onStart(app, { primary: !isWorker() }));` : `${serveCall};`, "");
   return lines.join("\n");
 }
 

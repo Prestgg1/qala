@@ -208,6 +208,17 @@ Qala itself over node:http's `upgrade`, so it compiles into the native binary. U
 (with Bun's WebSocket support behind the same `WsSocket` API), because Bun's node:http neither hands over upgraded sockets
 nor reports a client that leaves a streamed response.
 
+### Startup hook
+
+`app/kernel.ts` may export `onStart(app, { primary })`. The generated entry calls it once per process after the server is listening; `primary` is false in worker processes, so once-per-deployment work (schedulers, LISTEN bridges you only need once) can be limited to the primary:
+
+```ts
+export function onStart(app: App, process: { primary: boolean }): void {
+  app.container.get(RealtimeBus).start();          // every process
+  if (process.primary) app.container.get(Jobs).start(); // once
+}
+```
+
 ### Typed client
 
 `qala generate` (also run by `dev` and `build`) writes `.qala/api.ts` with the `Api` type and a route manifest. The frontend imports both:
