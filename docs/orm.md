@@ -73,7 +73,7 @@ Only `app/infrastructure` may import `.qala/queries.gen` (`qala check`); the res
 | aggregates | `count() countDistinct sum avg min max`, `.groupBy(...)`, `.having(...)` |
 | relations | `many(...)` → array, `one(...)` → row or null, nested to any depth |
 | writes | `insertInto(Task, { ... }).onConflict([...], update?).returning(...)`, `update({ t: Task }, { ... }).where(...).returning(...)`, `deleteFrom({ t: Task }).where(...)` — without `returning` the result is the affected-row count |
-| escape hatch | `sql<number>("integer", "extract(day from {0})", r.t.dueAt)` — `{n}` holes take expressions or values, never spliced text |
+| escape hatch | `sql<number>("integer", "extract(day from {0})", r.t.dueAt)` — `{n}` holes take expressions or values, never spliced text; typed `T \| null` (Postgres may return NULL); `notNull(sql<number>("integer", "coalesce({0}, 0)", x))` when it cannot |
 
 Parameters: `param.uuid() text() int() bigint() number() boolean() datetime() enum([...]) array(p) optional(p)`.
 

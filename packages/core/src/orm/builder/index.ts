@@ -179,11 +179,23 @@ export function max<T>(e: Expr<T>): Expr<T | null> {
 /**
  * A raw SQL expression: `sql<number>("integer", "extract(day from {0})", r.t.dueAt)`. `{n}` holes take
  * expressions or values (always as parameters/literals, never spliced text).
+ *
+ * Postgres may return NULL for any expression, so the result is typed `T | null` and decoded that way.
+ * Wrap it in `notNull(...)` when the SQL cannot produce NULL (`coalesce(...)`, `count(...)`, `exists(...)`).
  */
-export function sql<T>(kind: ValueKind, fragment: string, ...args: unknown[]): Expr<T> {
+export function sql<T>(kind: ValueKind, fragment: string, ...args: unknown[]): Expr<T | null> {
   const nodes: Node[] = [];
   for (const a of args) nodes.push(toNode(a));
-  return new Expr<T>(new RawNode(fragment, nodes, kind), kind, true);
+  return new Expr<T | null>(new RawNode(fragment, nodes, kind), kind, true);
+}
+
+/**
+ * Declares that an expression is never NULL: its type loses `| null` and the generated decoder reads it
+ * as a plain value. Only for expressions that really cannot be NULL (e.g. `coalesce(x, 0)`); a NULL would
+ * decode as 0 / false / "".
+ */
+export function notNull<T>(e: Expr<T>): Expr<NonNullable<T>> {
+  return new Expr<NonNullable<T>>(e.node, e.kind, false);
 }
 
 // ---------------------------------------------------------------- parameters
