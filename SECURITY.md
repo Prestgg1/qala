@@ -6,4 +6,4 @@ Qala implements its own HTTP/1.1 parser, WebSocket protocol, multipart parser an
 
 Qala is 0.x: only the latest release receives fixes.
 
-Known limitations (not vulnerabilities, but relevant to deployment): the PostgreSQL client does not support TLS yet, so keep the database on a private network.
+Deployment advice: connect to PostgreSQL with `sslmode=verify-full` (see docs/guide/deployment.md). The default, `prefer`, encrypts when it can but does not verify the server, like libpq. Client certificates are not supported yet.

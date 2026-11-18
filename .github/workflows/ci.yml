@@ -73,3 +73,36 @@ jobs:
           ls -l dist/app
           ldd dist/app
           echo "### Native binary: $(du -h dist/app | cut -f1)" >> "$GITHUB_STEP_SUMMARY"
+
+  tls:
+    # PostgreSQL with TLS on: every sslmode, certificate and host name verification, and the native
+    # binary connecting with sslmode=verify-full.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: oven-sh/setup-bun@v2
+      - run: sudo apt-get update && sudo apt-get install -y clang libsodium-dev
+      - name: start PostgreSQL with TLS
+        run: |
+          scripts/pg-tls-certs.sh "$RUNNER_TEMP/pg"
+          sudo chown 70:70 "$RUNNER_TEMP/pg/server.key" "$RUNNER_TEMP/pg/server.crt"
+          docker run -d --name pg -p 5432:5432 \
+            -e POSTGRES_USER=qala -e POSTGRES_PASSWORD=qala -e POSTGRES_DB=qala_test \
+            -v "$RUNNER_TEMP/pg/server.crt:/certs/server.crt:ro" -v "$RUNNER_TEMP/pg/server.key:/certs/server.key:ro" \
+            postgres:17-alpine -c ssl=on -c ssl_cert_file=/certs/server.crt -c ssl_key_file=/certs/server.key
+          for i in $(seq 30); do docker exec pg pg_isready -U qala && break; sleep 1; done
+          docker exec pg psql -U qala -d qala_test -c "create database qala_example"
+      - run: bun install
+      - name: TLS tests
+        env:
+          QALA_TEST_TLS_CA: ${{ runner.temp }}/pg/ca.pem
+          QALA_TEST_TLS_OTHER_CA: ${{ runner.temp }}/pg/other-ca.pem
+        run: bun test packages/core/test/pg-tls.test.ts
+      - name: native e2e with sslmode=verify-full
+        working-directory: examples/tasks
+        env:
+          DATABASE_URL: postgres://qala:qala@localhost:5432/qala_example?sslmode=verify-full&sslrootcert=${{ runner.temp }}/pg/ca.pem
+        run: bun test test

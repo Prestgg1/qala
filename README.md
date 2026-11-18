@@ -323,7 +323,7 @@ Why it is fast: `qala generate` writes a typed row decoder for every model (`.qa
 
 ## Status
 
-Qala is young (0.1). scriptc itself is experimental. The PostgreSQL client covers what the framework needs (no TLS yet, text protocol, common types). Feedback and pull requests are welcome.
+Qala is young (0.1). scriptc itself is experimental. The PostgreSQL client covers what the framework needs (TLS with libpq's `sslmode`, text protocol, common types). Feedback and pull requests are welcome.
 
 ## Documentation
 

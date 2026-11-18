@@ -9,7 +9,7 @@ PORT=3000 # type: number
 DEBUG=false # type: boolean
 SITE_URL=http://localhost:3000 # type: url
 LOG_LEVEL=info # type: enum(debug,info,warn,error)
-DATABASE_URL= # type: url required
+DATABASE_URL= # type: url required  (TLS: append ?sslmode=verify-full&sslrootcert=/path/ca.pem, see Deployment)
 API_TOKEN=dev-token
 ```
 

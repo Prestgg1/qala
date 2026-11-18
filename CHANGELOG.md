@@ -5,6 +5,7 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 ## Unreleased
 
 ### Added
+- PostgreSQL TLS, configured with libpq's `sslmode` (`disable`, `prefer` (default), `require`, `verify-ca`, `verify-full`) and `sslrootcert` in `DATABASE_URL`; `ssl=true` means `require`. Works in the native binary. `Connection.encrypted` tells whether a session is encrypted. CI runs every mode against a TLS-enabled server, and the native end-to-end suite with `verify-full`.
 - `qala doctor`: checks Bun, Node.js, platform, scriptc, generated code and database reachability.
 - Contribution guide, security policy, issue and PR templates, Renovate config (scriptc bumps get their own PR).
 - CI: test coverage report and a PostgreSQL 14–17 matrix.
