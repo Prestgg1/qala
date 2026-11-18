@@ -25,7 +25,7 @@ docker run --rm -e DATABASE_URL=postgres://… qala-tasks-migrate
 docker run -p 3000:3000 -e DATABASE_URL=postgres://… -e API_TOKEN=… qala-tasks
 ```
 
-The runtime image is a few MB on top of distroless. Copy only `dist/app`: `qala build` also leaves the LLVM IR (`dist/main.ll`) next to it, which is tens of MB and not needed at runtime.
+The runtime image is a few MB on top of distroless. Copy only `dist/app`: (`qala build` deletes the LLVM IR scriptc writes next to it; pass `--keep-ir` to keep it for debugging.)
 
 ## systemd
 

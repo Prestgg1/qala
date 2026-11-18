@@ -5,7 +5,7 @@ title: Getting started
 # Getting started
 
 
-Requirements: [Bun](https://bun.sh) ≥ 1.3, Node.js ≥ 24 (only to install scriptc), PostgreSQL, Linux or macOS. The packages are not on npm yet; use the repository:
+Requirements: [Bun](https://bun.sh) ≥ 1.3, Node.js ≥ 24 (only to install scriptc), clang (scriptc links with it), PostgreSQL, Linux or macOS. The packages are not on npm yet; use the repository:
 
 ```sh
 git clone https://github.com/Prestgg1/qala && cd qala && bun install
@@ -24,6 +24,10 @@ qala build && qala start       # native binary
 ```
 
 Next: [Project layout](./project-layout), then [Controllers](./controllers).
+
+## Testing
+
+`qala make:test tasks` writes `test/tasks.test.ts`: an in-process app wired exactly like the real one (from the generated `.qala/app.gen.ts`) with a typed client, run by `bun test`. See [Testing](./testing).
 
 ## Checking your setup
 

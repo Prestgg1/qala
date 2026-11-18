@@ -6,12 +6,10 @@
 // test/tasks.test.ts
 import { expect, test } from "bun:test";
 import { testApp } from "@qala/core/testing";
-import { providers } from "../app/providers";
-import { kernel } from "../app/kernel";
 import { manifest, type Api } from "../.qala/api";
-import { controllers } from "../.qala/routes.gen";
+import { appOptions, setup } from "../.qala/app.gen";
 
-const { client } = testApp<Api>({ controllers, providers, manifest, middleware: kernel.middleware, onError: kernel.onError });
+const { client } = testApp<Api>({ ...appOptions, manifest, setup });
 
 test("creates and reads a task", async () => {
   const task = await client.tasks.store({ body: { title: "write docs" } });
@@ -23,10 +21,13 @@ test("validation errors are ApiError", async () => {
 });
 ```
 
-`testApp(options)` takes the same options as `createApp` (the pieces of the generated `.qala/main.ts`), plus:
+`qala make:test tasks` writes this file for you. `.qala/app.gen.ts` is generated next to `main.ts` with exactly the options the real entry point passes to `createApp` (controllers, generated and hand-written providers, kernel middleware and error handling, `authenticate`), so the test app cannot drift from the production one.
+
+`testApp(options)` takes the same options as `createApp`, plus:
 
 - `manifest`: from `.qala/api.ts` (defaults to the one derived from the controllers),
-- `headers`: sent with every request, e.g. `{ authorization: "Bearer test" }`.
+- `headers`: sent with every request, e.g. `{ authorization: "Bearer test" }`,
+- `setup`: runs on the built app; pass `setup` from `.qala/app.gen.ts` so model events are bound like in production.
 
 It returns `{ app, client, get }`; `get(TaskService)` resolves a service from the container to arrange or inspect state. Override a provider for a test by listing a later `singleton(...)`/`value(...)` for the same token.
 

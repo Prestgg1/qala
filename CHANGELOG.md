@@ -12,7 +12,14 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - `qala doctor` also checks for clang, which scriptc needs to link.
 - Deployment guide (Docker, systemd, migrations, production checklist) and a multi-stage distroless Dockerfile for the example app.
 
+- `qala make:test <name>`: an in-process test wired like the real app, from the new generated `.qala/app.gen.ts` (`appOptions`, `setup`).
+- `testApp({ setup })` runs a hook on the built app (binds model events).
+- Benchmark workflow (weekly, on demand, or PRs labelled `bench`); `bench/run.ts --json --check` fails when native and Bun answer differently or native drops below 80% of Bun's req/s.
+- Release process with changesets: a "Version packages" PR, then npm publish and GitHub releases.
+
 ### Changed
+- `qala build` deletes the LLVM IR (`main.ll`, tens of MB) scriptc leaves next to the binary; `--keep-ir` keeps it.
+- Docs: the example binary is ~5 MB (the ~3 MB figure predates WebSockets, streaming and CRDT); clang is listed as a requirement.
 - scriptc 0.4.13 → 0.4.14 (no framework changes needed; unit, native and Bun end-to-end suites pass).
 
 ## 0.1.0

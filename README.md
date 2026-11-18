@@ -25,14 +25,14 @@ await api.tasks.store({ body: { title: 1 } });            // ✗ type error: tit
 ```
 $ qala build
 ✓ 15 files follow the dependency rule (domain ← application ← infrastructure/http).
-✓ dist/app  2.87 MB  10 routes  5.8s  (native, no Node.js runtime)
+✓ dist/app  4.86 MB  10 routes  8.3s  (native, no Node.js runtime)
 $ ldd dist/app
         libc.so.6 => /usr/lib/libc.so.6
 ```
 
 ## Why
 
-- **Native and small.** The whole app — HTTP server, router, validation, the PostgreSQL driver — is plain TypeScript inside scriptc's static subset, so it compiles to one ~3 MB machine-code binary. Idle memory is ~5 MB instead of ~55 MB, startup is ~7 ms instead of ~170 ms, and it outperforms the same code on Bun in every measured scenario — see [Performance](#performance). The same code also runs on Bun for development.
+- **Native and small.** The whole app — HTTP server, router, validation, the PostgreSQL driver — is plain TypeScript inside scriptc's static subset, so it compiles to one ~5 MB machine-code binary. Idle memory is ~5 MB instead of ~55 MB, startup is ~7 ms instead of ~170 ms, and it outperforms the same code on Bun in every measured scenario — see [Performance](#performance). The same code also runs on Bun for development.
 - **Organised by default.** Folders are layers and the builder enforces the dependency rule (`qala check`): domain depends on nothing, HTTP never reaches into infrastructure. Your codebase stays readable as it grows.
 - **Short code.** A route is one line. Validation, status codes, error responses and wiring are conventions, not boilerplate.
 - **Types end to end.** The request schemas and the handler's return type flow to the frontend client. Rename a field on the server and the frontend fails to compile.
@@ -110,7 +110,7 @@ parameter types, `resource(Model)` for plain CRUD, and a typed `env` from `.env.
 
 ## Quick start
 
-Requirements: [Bun](https://bun.sh) ≥ 1.3, Node.js ≥ 24 (only to install scriptc), PostgreSQL, Linux or macOS. The packages are not on npm yet; use the repository:
+Requirements: [Bun](https://bun.sh) ≥ 1.3, Node.js ≥ 24 (only to install scriptc), clang (scriptc links with it), PostgreSQL, Linux or macOS. The packages are not on npm yet; use the repository:
 
 ```sh
 git clone https://github.com/Prestgg1/qala && cd qala && bun install
@@ -305,7 +305,7 @@ The [example app](examples/tasks) measured as a native binary (`--optimization s
 |---|---|---|
 | startup | 7 ms | 173 ms |
 | memory idle / peak | 5 MB / 8 MB | 58 MB / 148 MB |
-| binary size | ~3 MB, links only libc | — |
+| binary size | ~5 MB, links only libc and libm | — |
 | `GET /tasks?limit=50` | **4 807 req/s** (p99 22 ms) | 3 348 req/s (p99 32 ms) |
 | `GET /tasks/:id` | **9 158 req/s** (p99 11 ms) | 5 888 req/s (p99 35 ms) |
 | `GET /tasks?q=` (ILIKE search) | **2 964 req/s** (p99 29 ms) | 1 454 req/s (p99 180 ms) |

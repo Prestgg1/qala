@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, watch } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, watch } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { checkArchitecture } from "./check";
 import { generate } from "./codegen";
@@ -39,7 +39,7 @@ export function dev(root: string): Promise<number> {
   });
 }
 
-export type BuildOptions = { out: string; optimization?: string; skipCheck?: boolean };
+export type BuildOptions = { out: string; optimization?: string; skipCheck?: boolean; keepIr?: boolean };
 
 /** `qala build`: architecture check, codegen, then scriptc → one native executable without Node. */
 export function build(root: string, options: BuildOptions): number {
@@ -66,10 +66,19 @@ export function build(root: string, options: BuildOptions): number {
   const started = Date.now();
   const result = spawnSync(scriptc, args, { cwd: root, stdio: "inherit" });
   if (result.status !== 0) return result.status ?? 1;
+  // scriptc leaves its LLVM IR (tens of MB) next to the binary; it is only useful for debugging the compiler.
+  if (options.keepIr !== true) for (const ir of irFiles(out)) rmSync(ir, { force: true });
   const seconds = ((Date.now() - started) / 1000).toFixed(1);
   const routes = controllers.reduce((n, c) => n + c.actions.length, 0);
   console.log(`${color.green("✓")} ${options.out}  ${formatBytes(statSync(out).size)}  ${routes} routes  ${seconds}s  (native, no Node.js runtime)`);
   return 0;
+}
+
+/** The LLVM IR files scriptc writes beside `out` (`main.ll`, and `<name>.ll` for good measure). */
+export function irFiles(out: string): string[] {
+  const dir = dirname(out);
+  const names = new Set(["main.ll", `${basename(out)}.ll`]);
+  return [...names].map((n) => join(dir, n)).filter((f) => existsSync(f));
 }
 
 /** `qala start`: run the built binary. */

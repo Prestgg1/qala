@@ -16,5 +16,22 @@
     "yjs": "13.6.33",
     "y-protocols": "1.0.7",
     "lib0": "0.2.119"
+  },
+  "keywords": [
+    "qala",
+    "typescript",
+    "backend",
+    "scriptc",
+    "native"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Prestgg1/qala.git",
+    "directory": "packages/crdt"
+  },
+  "homepage": "https://prestgg1.github.io/qala/",
+  "bugs": "https://github.com/Prestgg1/qala/issues",
+  "publishConfig": {
+    "access": "public"
   }
 }

@@ -262,6 +262,41 @@ export const ${fn}: Middleware = async (ctx, next) => {
   return { created: [file], notes: [] };
 }
 
+export function makeTest(root: string, name: string, force = false): MakeResult {
+  const n = resourceNames(name);
+  const file = `test/${n.pluralFile}.test.ts`;
+  const hasController = existsSync(join(root, LAYOUT.controllers, `${n.pluralFile}.controller.ts`));
+  const calls = hasController
+    ? `  test("${n.entities}.index", async () => {
+    const ${n.entities} = await client.${n.entities}.index({});
+    expect(Array.isArray(${n.entities})).toBe(true);
+  });`
+    : `  test("works", async () => {
+    // await client.${n.entities}.index({});
+    expect(client).toBeDefined();
+  });`;
+  createFile(
+    root,
+    file,
+    `import { describe, expect, test } from "bun:test";
+import { testApp } from "@qala/core/testing";
+import { manifest, type Api } from "../.qala/api";
+import { appOptions, setup } from "../.qala/app.gen";
+
+// The app is wired exactly like the real entry point (controllers, providers, kernel, auth) and runs
+// in-process: no socket, no binary. Pass headers: { authorization: "Bearer ..." } for auth routes, and
+// wrap database writes in withRollback(db, ...) from "@qala/core/testing" to leave the database clean.
+const { client } = testApp<Api>({ ...appOptions, manifest, setup });
+
+describe("${n.entities}", () => {
+${calls}
+});
+`,
+    force,
+  );
+  return { created: [file], notes: ["run it with: bun test (needs qala generate once, which dev and build also run)"] };
+}
+
 export function makeMigration(root: string, name: string): MakeResult {
   const dir = join(root, LAYOUT.migrations);
   let next = 1;

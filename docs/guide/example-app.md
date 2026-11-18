@@ -116,7 +116,7 @@ Native built with `--optimization speed` (`bun bench/run.ts --speed`), with the 
 
 | | startup | idle RSS | peak RSS under load |
 |---|---|---|---|
-| native (`dist/app`, ~3 MB) | 7 ms | 5 MB | 8 MB |
+| native (`dist/app`, ~5 MB) | 7 ms | 5 MB | 8 MB |
 | Bun | 173 ms | 58 MB | 148 MB |
 
 | scenario | native req/s | Bun req/s | native p50 / p99 | Bun p50 / p99 |
