@@ -142,8 +142,11 @@ export function writeNodeStream(res: ServerResponse, reply: StreamReply, headers
   return sink;
 }
 
-/** Bun.serve path: the stream as a `ReadableStream` body; cancelling it (client gone) closes the sink. */
-export function bunStreamBody(reply: StreamReply): ReadableStream<Uint8Array> {
+/**
+ * Bun.serve path: the stream as a `ReadableStream` body; cancelling it (client gone) closes the sink.
+ * `opened` sees the sink before the handler starts writing (the server tracks it for shutdown).
+ */
+export function bunStreamBody(reply: StreamReply, opened: (sink: StreamSink) => void = () => {}): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   const holder: { sink: StreamSink | null } = { sink: null };
   return new ReadableStream<Uint8Array>({
@@ -155,6 +158,7 @@ export function bunStreamBody(reply: StreamReply): ReadableStream<Uint8Array> {
         ),
       );
       holder.sink = sink;
+      opened(sink);
       reply.start(sink);
     },
     cancel() {

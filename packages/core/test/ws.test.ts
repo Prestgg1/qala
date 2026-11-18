@@ -145,7 +145,7 @@ const RoomController = controller(
 describe("WebSocket server", () => {
   const port = 39563;
   test("start", async () => {
-    await serve(createApp({ controllers: [{ name: "rooms", prefix: "/rooms", controller: RoomController }] }), { port, host: "127.0.0.1" });
+    await serve(createApp({ controllers: [{ name: "rooms", prefix: "/rooms", controller: RoomController }] }), { port, host: "127.0.0.1", handleSignals: false });
   });
 
   test("echo text and binary through the middleware chain", async () => {

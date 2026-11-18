@@ -17,7 +17,8 @@ describe("password (Bun)", () => {
       expect(await verifyPassword(f.pw, f.hash)).toBe(true);
       expect(await verifyPassword(`${f.pw}x`, f.hash)).toBe(false);
     }
-  });
+    // 40 Argon2id verifications (64 MiB, t=2) take 4-5 s on a 4-core runner: past bun's 5 s default.
+  }, 30_000);
 
   test("hashPassword writes argon2id PHC strings that Bun.password accepts", async () => {
     const hash = await hashPassword("correct horse battery staple");

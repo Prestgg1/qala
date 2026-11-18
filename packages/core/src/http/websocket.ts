@@ -8,6 +8,7 @@ import { createHash } from "node:crypto";
 import { ActionDef, type RuntimeHandler } from "./action";
 import type { App } from "./app";
 import type { Context, RequestData } from "./context";
+import type { Lifecycle } from "./lifecycle";
 import { Reply } from "./reply";
 
 /** How a `WsSocket` sends: raw framing over a socket, or Bun's ServerWebSocket. */
@@ -94,7 +95,7 @@ export function handshakeResponse(key: string): string {
   return `HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${acceptKey(key)}\r\n\r\n`;
 }
 
-const REASONS: Record<number, string> = { 400: "Bad Request", 401: "Unauthorized", 403: "Forbidden", 404: "Not Found", 405: "Method Not Allowed", 426: "Upgrade Required", 429: "Too Many Requests", 500: "Internal Server Error" };
+const REASONS: Record<number, string> = { 503: "Service Unavailable", 400: "Bad Request", 401: "Unauthorized", 403: "Forbidden", 404: "Not Found", 405: "Method Not Allowed", 426: "Upgrade Required", 429: "Too Many Requests", 500: "Internal Server Error" };
 
 /** A refused upgrade as raw HTTP/1.1 text (the socket is closed afterwards). */
 export function rawHttpResponse(reply: Reply): string {
@@ -319,13 +320,21 @@ export type NodeSocket = {
   on(event: "error", listener: (err: Error) => void): unknown;
 };
 
-/** Node:http `upgrade` path: run the app's checks, then complete the handshake and frame the connection here. */
-export async function nodeUpgrade(app: App, request: RequestData, socket: Socket, head: Buffer): Promise<void> {
+/**
+ * Node:http `upgrade` path: run the app's checks, then complete the handshake and frame the connection here.
+ * Messages larger than `maxMessage` bytes close the connection with 1009.
+ */
+export async function nodeUpgrade(app: App, request: RequestData, socket: Socket, head: Buffer, maxMessage: number = MAX_MESSAGE): Promise<void> {
   const key = request.headers["sec-websocket-key"];
   const version = request.headers["sec-websocket-version"];
   const upgradeHeader = (request.headers["upgrade"] ?? "").toLowerCase();
   if (upgradeHeader !== "websocket" || key === undefined || key === "" || (version !== undefined && version !== "13")) {
     socket.write(rawHttpResponse(new Reply(400, "Bad WebSocket handshake", { "content-type": "text/plain; charset=utf-8" })));
+    socket.end();
+    return;
+  }
+  if (app.shuttingDown) {
+    socket.write(rawHttpResponse(new Reply(503, "Server is shutting down", { "content-type": "text/plain; charset=utf-8" })));
     socket.end();
     return;
   }
@@ -348,9 +357,14 @@ export async function nodeUpgrade(app: App, request: RequestData, socket: Socket
     ),
     handlers,
     decision.ctx,
+    maxMessage,
   );
+  const id = app.lifecycle.addSocket(conn.socket);
   socket.on("data", (chunk) => conn.receive(chunk));
-  socket.on("close", () => conn.ended());
+  socket.on("close", () => {
+    conn.ended();
+    app.lifecycle.removeSocket(id);
+  });
   socket.on("error", () => conn.ended());
   conn.start();
   if (head.length > 0) conn.receive(head);
@@ -367,9 +381,12 @@ export type BunSocket = {
 /** Per-connection state carried through Bun's upgrade (`server.upgrade(req, { data })`). */
 export class BunSocketState {
   socket: WsSocket | null = null;
+  /** Id in the app's lifecycle while the socket is open (0 = not tracked). */
+  tracked = 0;
   constructor(
     readonly handlers: WsHandlers,
     readonly ctx: Context,
+    readonly life: Lifecycle | null = null,
   ) {}
 }
 
@@ -393,6 +410,7 @@ export const bunWebSocketHandlers = {
       state.ctx,
     );
     state.socket = socket;
+    if (state.life !== null) state.tracked = state.life.addSocket(socket);
     state.handlers.open(socket, state.ctx);
   },
   message(ws: BunSocket, message: string | Uint8Array): void {
@@ -404,6 +422,7 @@ export const bunWebSocketHandlers = {
     const state = ws.data;
     if (!(state instanceof BunSocketState) || state.socket === null) return;
     state.socket.markClosed();
+    if (state.life !== null && state.tracked !== 0) state.life.removeSocket(state.tracked);
     state.handlers.close(state.socket, code, reason);
   },
 };

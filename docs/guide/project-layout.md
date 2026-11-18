@@ -151,6 +151,16 @@ export function onStart(app: App, process: { primary: boolean }): void {
 }
 ```
 
+### Shutdown hook
+
+`app/kernel.ts` may also export `onShutdown(app)`. It runs on SIGTERM/SIGINT after in-flight requests finished and before the database pool closes; see [Graceful shutdown](./deployment#graceful-shutdown).
+
+```ts
+export async function onShutdown(app: App): Promise<void> {
+  await app.container.get(Jobs).stop();
+}
+```
+
 ### Typed client
 
 `qala generate` (also run by `dev` and `build`) writes `.qala/api.ts` with the `Api` type and a route manifest. The frontend imports both:

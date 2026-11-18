@@ -70,6 +70,10 @@ jobs:
       - name: e2e (Bun)
         working-directory: examples/tasks
         run: E2E_TARGET=bun bun test test
+      - name: shutdown and request limits (native binary and Bun)
+        env:
+          QALA_NATIVE: "1"
+        run: bun test packages/core/test/lifecycle.test.ts
       - name: binary report
         working-directory: examples/tasks
         run: |

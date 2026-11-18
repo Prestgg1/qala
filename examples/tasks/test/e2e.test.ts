@@ -143,4 +143,14 @@ describe(`tasks API (${ON_BUN ? "bun" : "native binary"})`, () => {
     expect((await fetch(`${BASE}/nope`)).status).toBe(404);
     expect((await fetch(`${BASE}/tasks`, { method: "PUT", headers: { authorization: `Bearer ${TOKEN}` } })).status).toBe(405);
   });
+
+  // Last: stops the server. The database pool closes and the process exits 0 (in-flight requests and WebSockets
+  // during shutdown are covered by packages/core/test/lifecycle.test.ts).
+  test("SIGTERM shuts down gracefully", async () => {
+    const exited = new Promise<number | null>((resolve) => server.on("exit", (code) => resolve(code)));
+    expect(Array.isArray(await api.tasks.index())).toBe(true);
+    server.kill("SIGTERM");
+    expect(await exited).toBe(0);
+    await expect(fetch(`${BASE}/health`)).rejects.toThrow();
+  });
 });

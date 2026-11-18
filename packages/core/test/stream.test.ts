@@ -55,7 +55,7 @@ function suite(name: string, port: number, withSockets: boolean): void {
     test("start", async () => {
       const controllers: ControllerEntry[] = [{ name: "live", prefix: "/live", controller: LiveController }];
       if (withSockets) controllers.push({ name: "echo", prefix: "/sock", controller: EchoController });
-      await serve(createApp({ controllers }), { port, host: "127.0.0.1" });
+      await serve(createApp({ controllers }), { port, host: "127.0.0.1", handleSignals: false });
     });
 
     test("SSE frames, headers and cookies from middleware", async () => {

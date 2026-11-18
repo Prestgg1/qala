@@ -41,6 +41,7 @@ WorkingDirectory=/opt/my-api
 EnvironmentFile=/etc/my-api.env
 User=my-api
 Restart=on-failure
+TimeoutStopSec=30
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
@@ -51,6 +52,49 @@ WantedBy=multi-user.target
 ```
 
 With `serve(app, { workers: "auto" })` the binary forks one process per core itself; do not also run several instances of the unit on one machine.
+
+## Graceful shutdown
+
+On SIGTERM or SIGINT the server shuts down in this order, then exits:
+
+1. Stop accepting connections and close idle keep-alive connections. Responses still being written carry `connection: close`.
+2. Close WebSockets with code 1001 ("going away") and end streamed responses (SSE), so clients reconnect elsewhere. New WebSocket upgrades get 503.
+3. Wait up to `shutdownTimeout` ms (default 10 000) for in-flight requests to finish.
+4. Run `onShutdown` hooks from `app/kernel.ts` and `app.onShutdown(...)`, last registered first.
+5. Close the database pool and the LISTEN connection.
+
+The exit code is 0 when everything drained in time and 1 when the timeout cut requests off. A second signal exits at once. With `workers`, the primary forwards the signal to every worker and exits after all of them finished.
+
+```ts
+// app/kernel.ts
+export async function onShutdown(app: App): Promise<void> {
+  await app.container.get(Mailer).flush(); // anything that must finish before the process exits
+}
+```
+
+Give the orchestrator a grace period longer than `shutdownTimeout`, because it sends SIGKILL when the period ends. Kubernetes' `terminationGracePeriodSeconds` defaults to 30 s, which fits. Docker's default is 10 s, the same as `shutdownTimeout`, so raise it: `docker run --stop-timeout 15`, or `stop_grace_period: 15s` in Compose. The binary handles SIGTERM itself, so it can run as PID 1 in the container without an init process. In Kubernetes, a short `preStop` sleep (e.g. 5 s) lets the endpoint leave the load balancer before draining starts. With systemd, `KillSignal=SIGTERM` (the default) and `TimeoutStopSec=30` fit.
+
+In tests, or to stop a server from code, call `await app.shutdown(timeoutMs)`. It returns whether everything drained in time and never exits the process. Pass `handleSignals: false` to `serve` to install no signal handlers.
+
+## Request limits
+
+`serve` limits what one client can make the server hold. Set them in `app/kernel.ts`:
+
+```ts
+export const serveOptions = {
+  bodyLimit: 1024 * 1024,   // bytes; larger bodies get 413 (multipart uploads have their own per-action limits)
+  headersTimeout: 10_000,   // ms to send the complete request head, after connecting or after the previous response; then 408
+  requestTimeout: 30_000,   // ms to send the whole body; then 408
+  keepAliveTimeout: 5_000,  // ms an idle keep-alive connection stays open
+  maxHeaderSize: 16 * 1024, // bytes of request line + headers; larger gets 431
+  wsMaxMessage: 16 * 1024 * 1024, // bytes per WebSocket message (all fragments); larger closes with 1009
+  shutdownTimeout: 10_000,  // ms to drain on SIGTERM
+};
+```
+
+The values above are the defaults. `headersTimeout` is the slowloris protection: a client that trickles its headers is disconnected even if it keeps sending bytes. The native binary enforces every limit itself, because scriptc's node:http does not apply `headersTimeout`. Under Bun (`qala dev`), Bun.serve applies the body, keep-alive and WebSocket limits, but its idle timer only starts after the request head is complete, and it works in steps of about four seconds.
+
+Behind a reverse proxy, keep the proxy's own timeouts and body limit at or below these, and the proxy's upstream keep-alive timeout below `keepAliveTimeout`, so the proxy never reuses a connection the app is closing.
 
 ## Database TLS
 
@@ -89,5 +133,5 @@ COPY db-ca.pem /app/db-ca.pem
 - [ ] Migrations run once, before the rollout
 - [ ] `rateLimit` is per process: with `workers: "auto"` the effective limit is multiplied by the core count
 - [ ] Build and runtime use the same architecture (build arm64 on arm64)
-
-Known gaps being worked on: graceful draining of in-flight requests on SIGTERM, request size/timeout limits. Track them in [CHANGELOG.md](https://github.com/Prestgg1/qala/blob/main/CHANGELOG.md).
+- [ ] The orchestrator's stop grace period is longer than `shutdownTimeout` (see [Graceful shutdown](#graceful-shutdown))
+- [ ] `bodyLimit` and the timeouts in `serveOptions` fit your largest legitimate request; the proxy's limits are no looser

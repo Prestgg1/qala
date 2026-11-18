@@ -174,7 +174,7 @@ describe("cookies", () => {
 
   test("over a real server: two Set-Cookie headers and a binary upload", async () => {
     const port = 39000 + Math.floor(Math.random() * 500);
-    await serve(makeApp(), { port, host: "127.0.0.1" });
+    await serve(makeApp(), { port, host: "127.0.0.1", handleSignals: false });
     const res = await fetch(`http://127.0.0.1:${port}/up/cookies`, { headers: { cookie: "sid=zz" } });
     expect(res.headers.getSetCookie().length).toBe(3);
     const form = new FormData();

@@ -324,13 +324,29 @@ describe("onStart hook", () => {
     writeFileSync(join(root, "app/kernel.ts"), "export const kernel = {};\n");
     expect(renderMain(root)).not.toContain("onStart");
   });
+
+  test("main.ts registers kernel.onShutdown with the app", async () => {
+    const { renderMain } = await import("../src/codegen");
+    const { mkdtempSync, mkdirSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const root = mkdtempSync(join(tmpdir(), "qala-onshutdown-"));
+    mkdirSync(join(root, "app"), { recursive: true });
+    writeFileSync(join(root, "app/kernel.ts"), "export const kernel = {};\nexport async function onShutdown(): Promise<void> {}\n");
+    const main = renderMain(root);
+    expect(main).toContain("import { kernel, onShutdown } from");
+    expect(main).toContain("app.onShutdown(() => onShutdown(app));");
+    expect(main.indexOf("app.onShutdown")).toBeLessThan(main.indexOf("serve(app"));
+    writeFileSync(join(root, "app/kernel.ts"), "export const kernel = {};\n");
+    expect(renderMain(root)).not.toContain("onShutdown");
+  });
 });
 
 describe("app.gen.ts and make:test", () => {
   test("appOptions mirror main.ts without serve, env or onStart", async () => {
     const { renderAppOptions } = await import("../src/codegen");
     const root = app({
-      "app/kernel.ts": "export const kernel = { middleware: [] };\nexport const serveOptions = {};\nexport function onStart(): void {}\n",
+      "app/kernel.ts": "export const kernel = { middleware: [] };\nexport const serveOptions = {};\nexport function onStart(): void {}\nexport function onShutdown(): void {}\n",
       "app/providers.ts": "export const providers = [];\n",
     });
     const out = renderAppOptions(root, true, true);
@@ -341,6 +357,7 @@ describe("app.gen.ts and make:test", () => {
     expect(out).toContain("bindEvents(app.container);");
     expect(out).not.toContain("serve(");
     expect(out).not.toContain("onStart");
+    expect(out).not.toContain("onShutdown");
     expect(out).not.toContain("createApp");
   });
 
