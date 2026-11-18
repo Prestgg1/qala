@@ -61,6 +61,9 @@ jobs:
       - name: doctor
         working-directory: examples/tasks
         run: bun ../../packages/cli/src/bin.ts doctor
+      - name: generate (.qala is not committed)
+        working-directory: examples/tasks
+        run: bun ../../packages/cli/src/bin.ts generate
       - name: e2e (native binary)
         working-directory: examples/tasks
         run: bun test test
@@ -101,6 +104,9 @@ jobs:
           QALA_TEST_TLS_CA: ${{ runner.temp }}/pg/ca.pem
           QALA_TEST_TLS_OTHER_CA: ${{ runner.temp }}/pg/other-ca.pem
         run: bun test packages/core/test/pg-tls.test.ts
+      - name: generate (.qala is not committed)
+        working-directory: examples/tasks
+        run: bun ../../packages/cli/src/bin.ts generate
       - name: native e2e with sslmode=verify-full
         working-directory: examples/tasks
         env:
