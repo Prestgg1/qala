@@ -1,0 +1,55 @@
+name: Bench
+# Native binary vs Bun on examples/tasks. Shared runners are noisy, so this is not run on every push:
+# weekly, on demand, and on PRs labelled "bench" (scriptc bumps should get the label).
+# It fails when the two servers answer differently or native falls below 80% of Bun's req/s.
+on:
+  schedule:
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+  pull_request:
+    types: [labeled, synchronize]
+
+jobs:
+  bench:
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'bench')
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: qala
+          POSTGRES_PASSWORD: qala
+          POSTGRES_DB: qala_example
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U qala" --health-interval 2s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: oven-sh/setup-bun@v2
+      - run: sudo apt-get update && sudo apt-get install -y clang libsodium-dev
+      - name: install oha
+        run: |
+          curl -fsSL -o oha https://github.com/hatoo/oha/releases/download/v1.4.6/oha-linux-amd64
+          chmod +x oha && sudo mv oha /usr/local/bin/oha
+      - run: bun install
+      - name: migrate and build
+        working-directory: examples/tasks
+        run: |
+          bun ../../packages/cli/src/bin.ts migrate
+          bun ../../packages/cli/src/bin.ts build --optimization speed
+      - name: bench
+        working-directory: examples/tasks
+        run: |
+          set -o pipefail
+          bun bench/run.ts --seconds 5 --speed --json bench.json --check | tee bench.md
+      - if: always()
+        working-directory: examples/tasks
+        run: cat bench.md >> "$GITHUB_STEP_SUMMARY" || true
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-${{ github.run_id }}
+          path: examples/tasks/bench.json

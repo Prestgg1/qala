@@ -1,17 +1,54 @@
 /**
- * A PostgreSQL client written for scriptc's static subset (wire protocol v3 over node:net):
- * SCRAM-SHA-256 / cleartext / trust auth, the extended query protocol with text parameters,
+ * A PostgreSQL client written for scriptc's static subset (wire protocol v3 over node:net, upgraded to
+ * node:tls per `sslmode`): SCRAM-SHA-256 / cleartext / trust auth, the extended query protocol with text parameters,
  * automatic prepared statements (an LRU cache per connection), pipelining, and a pool with
  * exclusive checkout (so transactions keep their connection).
  */
-import { connect, type Socket } from "node:net";
+import { readFileSync } from "node:fs";
+import { connect, isIP, type Socket } from "node:net";
+import { connect as tlsConnect, type TLSSocket } from "node:tls";
 import { createHash, createHmac, pbkdf2Sync, randomBytes } from "node:crypto";
 
 export type DbValue = string | number | boolean | null;
 /** A result row: column name → value (numbers and booleans decoded, everything else text). */
 export type DbRow = Record<string, DbValue>;
 
-export type ConnectionConfig = { host: string; port: number; user: string; password: string; database: string };
+/**
+ * libpq's sslmode values. `prefer` (the default, like libpq) uses TLS when the server offers it, without
+ * verifying the certificate; `require` insists on TLS, still unverified; `verify-ca` also checks the
+ * certificate chain against `sslrootcert` (or the system CAs); `verify-full` also checks the host name.
+ * Use `verify-full` in production.
+ */
+export type SslMode = "disable" | "prefer" | "require" | "verify-ca" | "verify-full";
+
+export type ConnectionConfig = {
+  host: string;
+  port: number;
+  user: string;
+  password: string;
+  database: string;
+  /** Defaults to "prefer". */
+  sslmode?: SslMode;
+  /** Path to a PEM file of trusted CA certificates (verify-ca / verify-full); "" uses the system CAs. */
+  sslrootcert?: string;
+};
+
+const SSL_MODES: SslMode[] = ["disable", "prefer", "require", "verify-ca", "verify-full"];
+
+/** Whether a TLS verification error is only about the host name (which verify-ca does not check). */
+export function isHostNameMismatch(reason: string): boolean {
+  return reason.includes("ERR_TLS_CERT_ALTNAME_INVALID") || reason.includes("Hostname/IP does not match");
+}
+
+/** Reads one `key=value` from a URL query string ("" if absent). */
+function queryParam(query: string, key: string): string {
+  for (const part of query.split("&")) {
+    const eq = part.indexOf("=");
+    const name = eq === -1 ? part : part.slice(0, eq);
+    if (decodeURIComponent(name) === key) return eq === -1 ? "" : decodeURIComponent(part.slice(eq + 1).replace(/\+/g, " "));
+  }
+  return "";
+}
 
 /** An error reported by PostgreSQL; `code` is its SQLSTATE (e.g. "23505" unique violation). */
 export class DatabaseError extends Error {
@@ -28,16 +65,27 @@ export class DatabaseError extends Error {
   }
 }
 
-/** Parses `postgres://user:pass@host:port/db`. */
+/** Parses `postgres://user:pass@host:port/db?sslmode=verify-full&sslrootcert=/path/ca.pem`. */
 export function parseUrl(url: string): ConnectionConfig {
-  const m = /^postgres(?:ql)?:\/\/([^:@/]*)(?::([^@/]*))?@([^:/?]+)(?::(\d+))?\/([^?]+)/.exec(url);
+  const m = /^postgres(?:ql)?:\/\/([^:@/]*)(?::([^@/]*))?@([^:/?]+)(?::(\d+))?\/([^?]+)(?:\?(.*))?$/.exec(url);
   if (m === null) throw new Error("DATABASE_URL must look like postgres://user:password@host:5432/database");
+  const query = m[6] ?? "";
+  const mode = queryParam(query, "sslmode");
+  // "allow" (plain first, TLS on refusal) is treated as "prefer": TLS first is never worse.
+  const sslmode: SslMode = mode === "" || mode === "allow" ? "prefer" : (SSL_MODES.find((x) => x === mode) ?? "prefer");
+  if (mode !== "" && mode !== "allow" && SSL_MODES.find((x) => x === mode) === undefined) {
+    throw new Error(`DATABASE_URL: unknown sslmode "${mode}" (use disable, prefer, require, verify-ca or verify-full)`);
+  }
+  // `ssl=true` (node-postgres, Prisma style) means require.
+  const ssl = queryParam(query, "ssl");
   return {
     user: decodeURIComponent(m[1] ?? ""),
     password: decodeURIComponent(m[2] ?? ""),
     host: m[3] ?? "localhost",
     port: Number(m[4] ?? "5432"),
     database: decodeURIComponent(m[5] ?? ""),
+    sslmode: mode === "" && (ssl === "true" || ssl === "1") ? "require" : sslmode,
+    sslrootcert: queryParam(query, "sslrootcert"),
   };
 }
 
@@ -160,7 +208,13 @@ function errorFields(body: Buffer): Map<string, string> {
 }
 
 export class Connection {
-  private readonly socket: Socket;
+  private socket: Socket;
+  /** Bumped when the socket is replaced by its TLS wrapper, so the plain socket's events are ignored. */
+  private generation = 0;
+  /** True between SSLRequest and the server's one-byte answer. */
+  private awaitingSsl = false;
+  /** Whether the session is encrypted (false until the TLS handshake finishes, or with sslmode=disable). */
+  encrypted = false;
   private buffer: Buffer = Buffer.alloc(0);
   private readonly queue: Pending[] = [];
   private readonly ready: Promise<void>;
@@ -189,15 +243,95 @@ export class Connection {
       this.onReady = resolve;
       this.onFail = reject;
     });
-    this.socket = connect(config.port, config.host);
-    this.socket.on("connect", () => {
-      const params = Buffer.concat([cstr("user"), cstr(config.user), cstr("database"), cstr(config.database), cstr("client_encoding"), cstr("UTF8"), cstr("TimeZone"), cstr("UTC"), Buffer.from([0])]);
-      const body = Buffer.concat([int32(196608), params]);
-      this.socket.write(Buffer.concat([int32(body.length + 4), body]));
+    const socket = connect(config.port, config.host);
+    this.socket = socket;
+    this.attach(socket);
+    socket.on("connect", () => {
+      if ((config.sslmode ?? "prefer") === "disable") return this.startup();
+      // SSLRequest: length 8, code 80877103. The server answers one byte: S (go ahead) or N (no TLS).
+      this.awaitingSsl = true;
+      socket.write(Buffer.concat([int32(8), int32(80877103)]));
     });
-    this.socket.on("data", (chunk: Buffer) => this.receive(chunk));
-    this.socket.on("error", (err: Error) => this.fail(err));
-    this.socket.on("close", () => this.fail(new Error("Database connection closed")));
+  }
+
+  private attach(socket: Socket, tls = false): void {
+    const generation = ++this.generation;
+    socket.on("data", (chunk: Buffer) => {
+      if (generation === this.generation) this.receive(chunk);
+    });
+    socket.on("error", (err: Error) => {
+      if (generation !== this.generation) return;
+      this.fail(tls && !this.encrypted ? new Error(`TLS handshake with the database failed: ${err.message}`) : err);
+    });
+    socket.on("close", () => {
+      if (generation === this.generation) this.fail(new Error("Database connection closed"));
+    });
+  }
+
+  private startup(): void {
+    const config = this.config;
+    const params = Buffer.concat([cstr("user"), cstr(config.user), cstr("database"), cstr(config.database), cstr("client_encoding"), cstr("UTF8"), cstr("TimeZone"), cstr("UTC"), Buffer.from([0])]);
+    const body = Buffer.concat([int32(196608), params]);
+    this.socket.write(Buffer.concat([int32(body.length + 4), body]));
+  }
+
+  /** Handles the server's answer to SSLRequest. */
+  private sslAnswer(answer: number): void {
+    this.awaitingSsl = false;
+    const mode = this.config.sslmode ?? "prefer";
+    if (answer === 0x53) return this.upgrade(mode);
+    if (answer === 0x4e) {
+      if (mode === "prefer") return this.startup();
+      return this.fail(new Error(`The database server does not support TLS, but sslmode=${mode} requires it`));
+    }
+    this.fail(new Error("Unexpected answer to the TLS request: the server may be too old for TLS negotiation"));
+  }
+
+  /** Wraps the plain socket in TLS, verifying it as the sslmode asks, then sends the startup message. */
+  private upgrade(mode: SslMode): void {
+    const config = this.config;
+    const verify = mode === "verify-ca" || mode === "verify-full";
+    let ca = "";
+    if (verify && (config.sslrootcert ?? "") !== "") {
+      try {
+        ca = readFileSync(config.sslrootcert ?? "", "utf8");
+      } catch (err) {
+        return this.fail(new Error(`Cannot read sslrootcert ${config.sslrootcert ?? ""}: ${(err as Error).message}`));
+      }
+    }
+    const servername = isIP(config.host) !== 0 ? undefined : config.host;
+    const plain = this.socket;
+    this.generation++; // the plain socket's events now belong to the TLS wrapper
+    // verify-full: node:tls's own checks (chain + host name). verify-ca: the chain only. node:tls has no
+    // chain-only mode without a custom checkServerIdentity, which scriptc cannot lower, so verify-ca
+    // connects without rejecting and checks `authorized` (the chain verdict, not the host name) itself
+    // before sending anything. prefer/require verify nothing.
+    let secured: TLSSocket;
+    try {
+      if (mode === "verify-full") {
+        secured = ca === "" ? tlsConnect({ socket: plain, servername, rejectUnauthorized: true }) : tlsConnect({ socket: plain, servername, ca, rejectUnauthorized: true });
+      } else if (mode === "verify-ca") {
+        secured = ca === "" ? tlsConnect({ socket: plain, servername, rejectUnauthorized: false }) : tlsConnect({ socket: plain, servername, ca, rejectUnauthorized: false });
+      } else {
+        secured = tlsConnect({ socket: plain, servername, rejectUnauthorized: false });
+      }
+    } catch (err) {
+      return this.fail(new Error(`TLS setup failed: ${(err as Error).message}`));
+    }
+    this.socket = secured;
+    this.attach(secured, true);
+    secured.once("secureConnect", () => {
+      if (mode === "verify-ca" && !secured.authorized) {
+        // Some runtimes fold the host name check into `authorized`; verify-ca ignores only that reason.
+        const reason = String(secured.authorizationError);
+        if (!isHostNameMismatch(reason)) {
+          secured.destroy();
+          return this.fail(new Error(`TLS handshake with the database failed: certificate not trusted (${reason})`));
+        }
+      }
+      this.encrypted = true;
+      this.startup();
+    });
   }
 
   open(): Promise<void> {
@@ -340,6 +474,12 @@ export class Connection {
   }
 
   private receive(chunk: Buffer): void {
+    if (this.awaitingSsl) {
+      // The answer is a single unframed byte, sent before any TLS data.
+      this.sslAnswer(chunk[0]!);
+      if (chunk.length > 1) this.fail(new Error("Unexpected data after the TLS answer (possible man-in-the-middle)"));
+      return;
+    }
     this.buffer = this.buffer.length === 0 ? chunk : Buffer.concat([this.buffer, chunk]);
     while (this.buffer.length >= 5) {
       const length = this.buffer.readInt32BE(1);

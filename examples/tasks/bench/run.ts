@@ -1,6 +1,8 @@
 /**
  * Native binary vs `bun .qala/main.ts`, same code, same database.
- *   bun bench/run.ts [--seconds 10] [--concurrency 50] [--speed]
+ *   bun bench/run.ts [--seconds 10] [--concurrency 50] [--speed] [--json out.json] [--check]
+ * --json writes the results for CI artifacts; --check exits 1 when the two servers answer differently or the
+ * native binary is clearly slower than Bun (below 80% of Bun's req/s) in any scenario.
  * Servers run on cores 0-2, the load generator (oha) on core 3. Needs `oha` and `taskset`.
  */
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
@@ -98,6 +100,8 @@ async function measure(name: string, cmd: string[], port: number): Promise<void>
   await new Promise((r) => proc.once("exit", r));
 }
 
+const different: string[] = [];
+
 // Same answers first: both servers on the same data, byte for byte.
 {
   const a = spawn(join(ROOT, "dist/app"), [], { cwd: ROOT, env: { ...process.env, PORT: "4801", LOG_REQUESTS: "false" }, stdio: "ignore" });
@@ -107,6 +111,7 @@ async function measure(name: string, cmd: string[], port: number): Promise<void>
   for (const path of ["/tasks?limit=50", `/tasks/${target}`, "/tasks?q=number%2012", "/tasks/nope", "/tasks?limit=0"]) {
     const [x, y] = await Promise.all([fetch(`http://127.0.0.1:4801${path}`).then((r) => r.text()), fetch(`http://127.0.0.1:4802${path}`).then((r) => r.text())]);
     console.log(`${x === y ? "same" : "DIFFERENT"}  ${path}  (${x.length} bytes)`);
+    if (x !== y) different.push(path);
   }
   a.kill();
   b.kill();
@@ -122,4 +127,21 @@ for (const s of servers) console.log(`| ${s.name} | ${s.startup} ms | ${s.idle} 
 console.log("\n| scenario | target | req/s | p50 | p99 | status codes |\n|---|---|---|---|---|---|");
 for (const s of scenarios) {
   for (const r of rows.filter((x) => x.scenario === s.name)) console.log(`| ${r.scenario} | ${r.target} | ${r.rps} | ${r.p50.toFixed(2)} ms | ${r.p99.toFixed(2)} ms | ${r.codes} |`);
+}
+
+const jsonIndex = process.argv.indexOf("--json");
+if (jsonIndex !== -1) {
+  writeFileSync(process.argv[jsonIndex + 1]!, JSON.stringify({ date: new Date().toISOString(), seconds: SECONDS, concurrency: CONCURRENCY, speed: SPEED, servers, rows, different }, null, 2));
+}
+
+if (process.argv.includes("--check")) {
+  const problems = different.map((p) => `responses differ for ${p}`);
+  for (const s of scenarios) {
+    const native = rows.find((r) => r.scenario === s.name && r.target === "native");
+    const bun = rows.find((r) => r.scenario === s.name && r.target === "bun");
+    if (native !== undefined && bun !== undefined && native.rps < bun.rps * 0.8) problems.push(`${s.name}: native ${native.rps} req/s < 80% of Bun's ${bun.rps}`);
+  }
+  for (const p of problems) console.error(`✗ ${p}`);
+  if (problems.length > 0) process.exit(1);
+  console.log("✓ native matches Bun byte for byte and is not slower");
 }

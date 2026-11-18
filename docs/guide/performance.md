@@ -11,7 +11,7 @@ The [example app](https://github.com/Prestgg1/qala/tree/main/examples/tasks) mea
 |---|---|---|
 | startup | 7 ms | 173 ms |
 | memory idle / peak | 5 MB / 8 MB | 58 MB / 148 MB |
-| binary size | ~3 MB, links only libc | — |
+| binary size | ~5 MB, links only libc and libm | — |
 | `GET /tasks?limit=50` | **4 807 req/s** (p99 22 ms) | 3 348 req/s (p99 32 ms) |
 | `GET /tasks/:id` | **9 158 req/s** (p99 11 ms) | 5 888 req/s (p99 35 ms) |
 | `GET /tasks?q=` (ILIKE search) | **2 964 req/s** (p99 29 ms) | 1 454 req/s (p99 180 ms) |

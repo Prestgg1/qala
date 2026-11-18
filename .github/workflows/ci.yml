@@ -7,9 +7,13 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: ["14", "15", "16", "17"]
     services:
       postgres:
-        image: postgres:17-alpine
+        image: postgres:${{ matrix.postgres }}-alpine
         env:
           POSTGRES_USER: qala
           POSTGRES_PASSWORD: qala
@@ -25,4 +29,86 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install
       - run: bunx tsc -p tsconfig.json --noEmit
-      - run: bun test packages
+      - run: bun test packages --coverage --coverage-reporter=text --coverage-reporter=lcov
+      - if: matrix.postgres == '17'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage/lcov.info
+
+  native:
+    # The native binary is the product: build examples/tasks with scriptc and run its end-to-end suite
+    # against the binary and against Bun. scriptc bumps (Renovate) are only safe to merge when this is green.
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: qala
+          POSTGRES_PASSWORD: qala
+          POSTGRES_DB: qala_example
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U qala" --health-interval 2s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: oven-sh/setup-bun@v2
+      - run: sudo apt-get update && sudo apt-get install -y clang libsodium-dev
+      - run: bun install
+      - name: doctor
+        working-directory: examples/tasks
+        run: bun ../../packages/cli/src/bin.ts doctor
+      - name: generate (.qala is not committed)
+        working-directory: examples/tasks
+        run: bun ../../packages/cli/src/bin.ts generate
+      - name: e2e (native binary)
+        working-directory: examples/tasks
+        run: bun test test
+      - name: e2e (Bun)
+        working-directory: examples/tasks
+        run: E2E_TARGET=bun bun test test
+      - name: binary report
+        working-directory: examples/tasks
+        run: |
+          ls -l dist/app
+          ldd dist/app
+          echo "### Native binary: $(du -h dist/app | cut -f1)" >> "$GITHUB_STEP_SUMMARY"
+
+  tls:
+    # PostgreSQL with TLS on: every sslmode, certificate and host name verification, and the native
+    # binary connecting with sslmode=verify-full.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: oven-sh/setup-bun@v2
+      - run: sudo apt-get update && sudo apt-get install -y clang libsodium-dev
+      - name: start PostgreSQL with TLS
+        run: |
+          scripts/pg-tls-certs.sh "$RUNNER_TEMP/pg"
+          sudo chown 70:70 "$RUNNER_TEMP/pg/server.key" "$RUNNER_TEMP/pg/server.crt"
+          docker run -d --name pg -p 5432:5432 \
+            -e POSTGRES_USER=qala -e POSTGRES_PASSWORD=qala -e POSTGRES_DB=qala_test \
+            -v "$RUNNER_TEMP/pg/server.crt:/certs/server.crt:ro" -v "$RUNNER_TEMP/pg/server.key:/certs/server.key:ro" \
+            postgres:17-alpine -c ssl=on -c ssl_cert_file=/certs/server.crt -c ssl_key_file=/certs/server.key
+          for i in $(seq 30); do docker exec pg pg_isready -h 127.0.0.1 -U qala && break; sleep 1; done
+          docker exec pg psql -U qala -d qala_test -c "create database qala_example"
+      - run: bun install
+      - name: TLS tests
+        env:
+          QALA_TEST_TLS_CA: ${{ runner.temp }}/pg/ca.pem
+          QALA_TEST_TLS_OTHER_CA: ${{ runner.temp }}/pg/other-ca.pem
+        run: bun test packages/core/test/pg-tls.test.ts
+      - name: generate (.qala is not committed)
+        working-directory: examples/tasks
+        run: bun ../../packages/cli/src/bin.ts generate
+      - name: native e2e with sslmode=verify-full
+        working-directory: examples/tasks
+        env:
+          DATABASE_URL: postgres://qala:qala@localhost:5432/qala_example?sslmode=verify-full&sslrootcert=${{ runner.temp }}/pg/ca.pem
+        run: bun test test

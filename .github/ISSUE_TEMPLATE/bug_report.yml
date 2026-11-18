@@ -1,0 +1,20 @@
+name: Bug report
+description: Something does not work as documented
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes: { label: What happened, description: "Include the smallest code that reproduces it." }
+    validations: { required: true }
+  - type: textarea
+    id: expected
+    attributes: { label: What you expected }
+    validations: { required: true }
+  - type: dropdown
+    id: runtime
+    attributes: { label: Where does it fail, options: ["native binary (qala build)", "Bun (qala dev)", "both"] }
+    validations: { required: true }
+  - type: textarea
+    id: doctor
+    attributes: { label: Output of `qala doctor`, render: text }
+    validations: { required: true }

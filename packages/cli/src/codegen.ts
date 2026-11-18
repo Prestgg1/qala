@@ -130,6 +130,46 @@ export function renderMain(root: string, hasModels = false, hasGeneratedProvider
 }
 
 /**
+ * `.qala/app.gen.ts`: the same options the generated main passes to createApp, exported for tests
+ * (`testApp({ ...appOptions })`) so an in-process test app is wired exactly like the real one.
+ * Derived from renderMain so the two can never drift. Imported by tests only, never by main.ts.
+ */
+export function renderAppOptions(root: string, hasModels = false, hasGeneratedProviders = false): string {
+  const main = renderMain(root, hasModels, hasGeneratedProviders);
+  const out: string[] = [];
+  let bindsEvents = false;
+  for (const line of main.split("\n")) {
+    if (/^import \{ createApp(, isWorker)?, serve \} from "@qala\/core";$/.test(line)) {
+      out.push('import type { App, AppOptions } from "@qala/core";');
+      continue;
+    }
+    if (line.startsWith("import { env }") || line.startsWith("import { config }")) continue;
+    if (line.startsWith("import { kernel")) {
+      out.push(line.replace(/import \{ kernel[^}]*\}/, "import { kernel }"));
+      continue;
+    }
+    if (line === "const app = createApp({") {
+      out.push("export const appOptions: AppOptions = {");
+      continue;
+    }
+    if (line === "});") {
+      out.push("};");
+      continue;
+    }
+    if (line === "bindEvents(app.container);") {
+      bindsEvents = true;
+      continue;
+    }
+    if (line.startsWith("serve(")) continue;
+    out.push(line);
+  }
+  out.push("/** Call on an app built from appOptions (testApp does this for you when passed `setup`). */");
+  out.push(bindsEvents ? "export function setup(app: App): void {\n  bindEvents(app.container);\n}" : "export function setup(_app: App): void {}");
+  out.push("");
+  return out.join("\n").replace(/\n{3,}/g, "\n\n");
+}
+
+/**
  * Scans controllers and models and (re)writes `.qala/routes.gen.ts`, `.qala/api.ts`, `.qala/main.ts`
  * and, when the app has models, `.qala/models.gen.ts` (typed row decoders compiled statically by scriptc).
  */
@@ -155,6 +195,7 @@ export function generate(root: string): Generated {
   const authTypes = hasAppUser(root);
   if (authTypes) files.push([AUTH_GEN, renderAuthTypes(root)]);
   files.push(["main.ts", renderMain(root, hasModels, hasGeneratedProviders)]);
+  files.push(["app.gen.ts", renderAppOptions(root, hasModels, hasGeneratedProviders)]);
   for (const [name, content] of files) if (writeIfChanged(join(dir, name), content)) written.push(`${LAYOUT.generated}/${name}`);
   const stale = join(dir, "models.gen.ts");
   if (!hasModels && existsSync(stale)) rmSync(stale);

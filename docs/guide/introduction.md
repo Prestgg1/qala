@@ -11,7 +11,7 @@ Qala gives you the shape of Laravel or ASP.NET Core: controllers, dependency inj
 ```
 $ qala build
 ✓ 15 files follow the dependency rule (domain ← application ← infrastructure/http).
-✓ dist/app  2.87 MB  10 routes  5.8s  (native, no Node.js runtime)
+✓ dist/app  4.86 MB  10 routes  8.3s  (native, no Node.js runtime)
 $ ldd dist/app
         libc.so.6 => /usr/lib/libc.so.6
 ```
@@ -19,7 +19,7 @@ $ ldd dist/app
 ## Why
 
 
-- **Native and small.** The whole app — HTTP server, router, validation, the PostgreSQL driver — is plain TypeScript inside scriptc's static subset, so it compiles to one ~3 MB machine-code binary. Idle memory is ~5 MB instead of ~55 MB, startup is ~7 ms instead of ~170 ms, and it outperforms the same code on Bun in every measured scenario — see [Performance](./performance). The same code also runs on Bun for development.
+- **Native and small.** The whole app — HTTP server, router, validation, the PostgreSQL driver — is plain TypeScript inside scriptc's static subset, so it compiles to one ~5 MB machine-code binary. Idle memory is ~5 MB instead of ~55 MB, startup is ~7 ms instead of ~170 ms, and it outperforms the same code on Bun in every measured scenario — see [Performance](./performance). The same code also runs on Bun for development.
 - **Organised by default.** Folders are layers and the builder enforces the dependency rule (`qala check`): domain depends on nothing, HTTP never reaches into infrastructure. Your codebase stays readable as it grows.
 - **Short code.** A route is one line. Validation, status codes, error responses and wiring are conventions, not boilerplate.
 - **Types end to end.** The request schemas and the handler's return type flow to the frontend client. Rename a field on the server and the frontend fails to compile.
@@ -54,7 +54,7 @@ $ ldd dist/app
 ## Status
 
 
-Qala is young (0.1). scriptc itself is experimental. The PostgreSQL client covers what the framework needs (no TLS yet, text protocol, common types). Feedback and pull requests are welcome.
+Qala is young (0.1). scriptc itself is experimental. The PostgreSQL client covers what the framework needs (TLS with libpq's `sslmode`, text protocol, common types). Feedback and pull requests are welcome.
 
 ## Next
 

@@ -1,1 +1,34 @@
-{"name": "@qala/core", "version": "0.1.0", "type": "module", "license": "MIT", "exports": {".": "./src/index.ts", "./query": "./src/orm/builder/index.ts", "./testing": "./src/testing.ts", "./package.json": "./package.json"}, "files": ["src", "native"]}
+{
+  "name": "@qala/core",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": "./src/index.ts",
+    "./query": "./src/orm/builder/index.ts",
+    "./testing": "./src/testing.ts",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "native"
+  ],
+  "description": "Qala runtime: HTTP, routing, validation, DI, errors, middleware, PostgreSQL, models, migrations",
+  "keywords": [
+    "qala",
+    "typescript",
+    "backend",
+    "scriptc",
+    "native"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Prestgg1/qala.git",
+    "directory": "packages/core"
+  },
+  "homepage": "https://prestgg1.github.io/qala/",
+  "bugs": "https://github.com/Prestgg1/qala/issues",
+  "publishConfig": {
+    "access": "public"
+  }
+}

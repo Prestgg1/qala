@@ -1,0 +1,17 @@
+name: Feature request
+description: Propose a new feature or convention
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes: { label: Problem, description: "What are you trying to do, and why is it hard today?" }
+    validations: { required: true }
+  - type: textarea
+    id: proposal
+    attributes: { label: Proposed API, description: "Show what the code would look like." }
+  - type: checkboxes
+    id: native
+    attributes:
+      label: Native build
+      options:
+        - label: I have considered whether this fits scriptc's static subset (no dynamic imports, no `any`-shaped data)

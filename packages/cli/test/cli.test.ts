@@ -156,7 +156,7 @@ describe("codegen", () => {
       "config/app.ts": 'import { defineConfig } from "@qala/core";\nexport const config = defineConfig((env) => ({ port: env.number("PORT", 3000) }));\n',
     });
     const { written } = generate(root);
-    expect(written.sort()).toEqual([".qala/api.ts", ".qala/main.ts", ".qala/routes.gen.ts"]);
+    expect(written.sort()).toEqual([".qala/api.ts", ".qala/app.gen.ts", ".qala/main.ts", ".qala/routes.gen.ts"]);
     const routes = readFileSync(join(root, ".qala/routes.gen.ts"), "utf8");
     expect(routes).toContain('import { UsersController as AdminUsersController } from "../app/http/controllers/admin/users.controller";');
     expect(routes).toContain('{ name: "adminUsers", prefix: "/admin/users", controller: AdminUsersController },');
@@ -323,5 +323,35 @@ describe("onStart hook", () => {
     expect(main).toContain("serve(app, { port: Number(process.env.PORT ?? \"3000\") }).then(() => onStart(app, { primary: !isWorker() }));");
     writeFileSync(join(root, "app/kernel.ts"), "export const kernel = {};\n");
     expect(renderMain(root)).not.toContain("onStart");
+  });
+});
+
+describe("app.gen.ts and make:test", () => {
+  test("appOptions mirror main.ts without serve, env or onStart", async () => {
+    const { renderAppOptions } = await import("../src/codegen");
+    const root = app({
+      "app/kernel.ts": "export const kernel = { middleware: [] };\nexport const serveOptions = {};\nexport function onStart(): void {}\n",
+      "app/providers.ts": "export const providers = [];\n",
+    });
+    const out = renderAppOptions(root, true, true);
+    expect(out).toContain('import type { App, AppOptions } from "@qala/core";');
+    expect(out).toContain("import { kernel } from");
+    expect(out).toContain("export const appOptions: AppOptions = {");
+    expect(out).toContain("providers: [...generatedProviders, ...providers],");
+    expect(out).toContain("bindEvents(app.container);");
+    expect(out).not.toContain("serve(");
+    expect(out).not.toContain("onStart");
+    expect(out).not.toContain("createApp");
+  });
+
+  test("make:test writes an in-process test, calling index when the controller exists", async () => {
+    const { makeTest } = await import("../src/make");
+    const root = app({ "app/http/controllers/tasks.controller.ts": "export class TasksController {}\n" });
+    expect(makeTest(root, "task").created).toEqual(["test/tasks.test.ts"]);
+    const text = readFileSync(join(root, "test/tasks.test.ts"), "utf8");
+    expect(text).toContain("testApp<Api>({ ...appOptions, manifest, setup })");
+    expect(text).toContain("client.tasks.index({})");
+    expect(makeTest(root, "notes").created).toEqual(["test/notes.test.ts"]);
+    expect(readFileSync(join(root, "test/notes.test.ts"), "utf8")).not.toContain("client.notes.index({});\n    expect(Array");
   });
 });

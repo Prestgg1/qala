@@ -1,0 +1,7 @@
+**/node_modules
+**/dist
+**/.qala
+**/.env
+docs/.vitepress/cache
+docs/.vitepress/dist
+.git

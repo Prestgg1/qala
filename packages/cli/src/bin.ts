@@ -1,9 +1,10 @@
 #!/usr/bin/env bun
 import { checkArchitecture } from "./check";
 import { generate } from "./codegen";
+import { doctorCommand } from "./doctor";
 import { fixApp } from "./fix";
 import type { SkippedModel } from "./models";
-import { makeController, makeMiddleware, makeMigration, makeModel, makeRepository, makeService, type MakeResult } from "./make";
+import { makeController, makeMiddleware, makeMigration, makeModel, makeRepository, makeService, makeTest, type MakeResult } from "./make";
 import { pullCommand } from "./pull";
 import { build, dev, migrateCommand, start } from "./run";
 import { migrateMakeCommand } from "./migrate-make";
@@ -26,7 +27,7 @@ ${color.bold("Develop")}
                               generate models from an existing PostgreSQL database
 
 ${color.bold("Ship")}
-  build [--out dist/app] [--optimization release|speed] [--skip-check]
+  build [--out dist/app] [--optimization release|speed] [--skip-check] [--keep-ir]
                               check + generate + scriptc: one native binary, no Node.js
   start [--out dist/app]      run the built binary
 
@@ -40,6 +41,7 @@ ${color.bold("Scaffold")}
   make:migration <name>
   (make:* accept --force to overwrite)
 
+  doctor                      check Bun, Node.js, scriptc, clang, project files and database
   help                        this text
 `;
 
@@ -125,6 +127,8 @@ export async function main(argv: string[]): Promise<number> {
       printRoutes(root);
       return 0;
     }
+    case "doctor":
+      return doctorCommand();
     case "routes":
       printRoutes(findRoot());
       return 0;
@@ -148,7 +152,7 @@ export async function main(argv: string[]): Promise<number> {
     case "dev":
       return dev(findRoot());
     case "build":
-      return build(findRoot(), { out: flag(args, "out") ?? "dist/app", optimization: flag(args, "optimization"), skipCheck: args.flags.get("skip-check") === true });
+      return build(findRoot(), { out: flag(args, "out") ?? "dist/app", optimization: flag(args, "optimization"), skipCheck: args.flags.get("skip-check") === true, keepIr: args.flags.get("keep-ir") === true });
     case "start":
       return start(findRoot(), flag(args, "out") ?? "dist/app");
     case "migrate":
@@ -179,6 +183,9 @@ export async function main(argv: string[]): Promise<number> {
       return 0;
     case "make:middleware":
       printMake(makeMiddleware(findRoot(), needName("auth"), force));
+      return 0;
+    case "make:test":
+      printMake(makeTest(findRoot(), needName("tasks"), force));
       return 0;
     case "make:migration":
       printMake(makeMigration(findRoot(), needName("create_tasks")));

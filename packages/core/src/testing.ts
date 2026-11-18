@@ -6,6 +6,11 @@
  *   import { manifest, type Api } from "../.qala/api";
  *
  *   const { client } = testApp<Api>({ controllers, manifest, providers });
+ *
+ * In an app, `.qala/app.gen.ts` has the options the real entry point uses (`qala make:test` writes this):
+ *
+ *   import { appOptions, setup } from "../.qala/app.gen";
+ *   const { client } = testApp<Api>({ ...appOptions, manifest, setup });
  *   const task = await client.tasks.show({ params: { id } });
  */
 import { createClient, type Client, type Manifest } from "@qala/client";
@@ -18,6 +23,8 @@ export type TestAppOptions = AppOptions & {
   manifest?: Manifest;
   /** Headers sent with every request, e.g. `{ authorization: "Bearer test" }`. */
   headers?: Record<string, string>;
+  /** Runs on the app after it is built, e.g. `setup` from `.qala/app.gen.ts` (binds model events). */
+  setup?: (app: App) => void;
 };
 
 export type TestApp<Api> = {
@@ -31,6 +38,7 @@ export type TestApp<Api> = {
 /** Builds the app in-process (controllers, providers, middleware like the generated main) and returns a typed client for it. */
 export function testApp<Api = never>(options: TestAppOptions): TestApp<Api> {
   const app = createApp(options);
+  options.setup?.(app);
   const client = createClient<Api>({
     baseUrl: "http://test",
     manifest: options.manifest ?? app.manifest(),
