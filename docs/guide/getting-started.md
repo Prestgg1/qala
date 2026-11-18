@@ -25,6 +25,24 @@ qala build && qala start       # native binary
 
 Next: [Project layout](./project-layout), then [Controllers](./controllers).
 
+## Checking your setup
+
+`qala doctor` checks everything Qala needs and tells you how to fix what is missing:
+
+```sh
+$ qala doctor
+✓ Bun             1.3.2
+✓ Node.js         v24.2.0
+✓ Platform        linux
+✓ scriptc         0.4.13
+✓ Project         /home/me/my-api
+✓ Generated code  .qala/ present
+✗ Database        localhost:5432 unreachable
+                  → is PostgreSQL running?
+```
+
+It exits with 1 when a check fails, so it can run in CI. Include its output in bug reports.
+
 ## For LLMs and coding agents
 
 The docs are also published as plain text for language models:

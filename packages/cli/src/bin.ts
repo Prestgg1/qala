@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { checkArchitecture } from "./check";
 import { generate } from "./codegen";
+import { doctorCommand } from "./doctor";
 import { fixApp } from "./fix";
 import type { SkippedModel } from "./models";
 import { makeController, makeMiddleware, makeMigration, makeModel, makeRepository, makeService, type MakeResult } from "./make";
@@ -40,6 +41,7 @@ ${color.bold("Scaffold")}
   make:migration <name>
   (make:* accept --force to overwrite)
 
+  doctor                      check Bun, Node.js, scriptc, project files and database
   help                        this text
 `;
 
@@ -125,6 +127,8 @@ export async function main(argv: string[]): Promise<number> {
       printRoutes(root);
       return 0;
     }
+    case "doctor":
+      return doctorCommand();
     case "routes":
       printRoutes(findRoot());
       return 0;

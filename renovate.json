@@ -1,0 +1,21 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "rangeStrategy": "pin",
+  "packageRules": [
+    {
+      "matchPackageNames": ["scriptc"],
+      "groupName": "scriptc",
+      "labels": ["scriptc", "needs-native-check"],
+      "schedule": ["at any time"],
+      "prPriority": 10,
+      "automerge": false
+    },
+    {
+      "matchDepTypes": ["devDependencies"],
+      "excludePackageNames": ["scriptc"],
+      "groupName": "dev dependencies",
+      "schedule": ["before 6am on monday"]
+    }
+  ]
+}
