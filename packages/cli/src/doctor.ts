@@ -99,6 +99,17 @@ async function databaseCheck(root: string): Promise<CheckResult> {
     : { name: "Database", status: "fail", detail: `${host}:${port} unreachable`, hint: "is PostgreSQL running?" };
 }
 
+function clangCheck(): CheckResult {
+  try {
+    const r = Bun.spawnSync(["clang", "--version"]);
+    if (r.exitCode === 0) {
+      const m = /version (\d+[.\d]*)/.exec(r.stdout.toString());
+      return { name: "clang", status: "ok", detail: m?.[1] ?? "found" };
+    }
+  } catch {}
+  return { name: "clang", status: "fail", detail: "not found (scriptc needs it to link native binaries)", hint: "apt install clang / xcode-select --install" };
+}
+
 export async function runDoctor(): Promise<CheckResult[]> {
   const results = checkRuntime(typeof Bun === "undefined" ? undefined : Bun.version, nodeVersion(), process.platform);
   let root: string | null = null;
@@ -106,6 +117,7 @@ export async function runDoctor(): Promise<CheckResult[]> {
     root = findRoot();
   } catch {}
   results.push(scriptcCheck(root));
+  results.push(clangCheck());
   if (root === null) {
     results.push({ name: "Project", status: "warn", detail: "not inside a Qala app (app checks skipped)" });
     return results;

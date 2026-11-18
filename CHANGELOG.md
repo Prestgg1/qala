@@ -8,6 +8,12 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - `qala doctor`: checks Bun, Node.js, platform, scriptc, generated code and database reachability.
 - Contribution guide, security policy, issue and PR templates, Renovate config (scriptc bumps get their own PR).
 - CI: test coverage report and a PostgreSQL 14–17 matrix.
+- CI: `native` job builds `examples/tasks` with scriptc and runs its end-to-end suite against the binary and against Bun.
+- `qala doctor` also checks for clang, which scriptc needs to link.
+- Deployment guide (Docker, systemd, migrations, production checklist) and a multi-stage distroless Dockerfile for the example app.
+
+### Changed
+- scriptc 0.4.13 → 0.4.14 (no framework changes needed; unit, native and Bun end-to-end suites pass).
 
 ## 0.1.0
 

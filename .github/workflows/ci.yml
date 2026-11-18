@@ -35,3 +35,41 @@ jobs:
         with:
           name: coverage
           path: coverage/lcov.info
+
+  native:
+    # The native binary is the product: build examples/tasks with scriptc and run its end-to-end suite
+    # against the binary and against Bun. scriptc bumps (Renovate) are only safe to merge when this is green.
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: qala
+          POSTGRES_PASSWORD: qala
+          POSTGRES_DB: qala_example
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U qala" --health-interval 2s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: oven-sh/setup-bun@v2
+      - run: sudo apt-get update && sudo apt-get install -y clang libsodium-dev
+      - run: bun install
+      - name: doctor
+        working-directory: examples/tasks
+        run: bun ../../packages/cli/src/bin.ts doctor
+      - name: e2e (native binary)
+        working-directory: examples/tasks
+        run: bun test test
+      - name: e2e (Bun)
+        working-directory: examples/tasks
+        run: E2E_TARGET=bun bun test test
+      - name: binary report
+        working-directory: examples/tasks
+        run: |
+          ls -l dist/app
+          ldd dist/app
+          echo "### Native binary: $(du -h dist/app | cut -f1)" >> "$GITHUB_STEP_SUMMARY"

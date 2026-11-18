@@ -61,6 +61,7 @@ export default defineConfig({
         text: "Native builds",
         items: [
           { text: "Writing code for scriptc", link: "/guide/native" },
+          { text: "Deployment", link: "/guide/deployment" },
           { text: "qala check", link: "/guide/check" },
         ],
       },

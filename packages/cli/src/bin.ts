@@ -41,7 +41,7 @@ ${color.bold("Scaffold")}
   make:migration <name>
   (make:* accept --force to overwrite)
 
-  doctor                      check Bun, Node.js, scriptc, project files and database
+  doctor                      check Bun, Node.js, scriptc, clang, project files and database
   help                        this text
 `;
 
