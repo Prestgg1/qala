@@ -1,4 +1,5 @@
 import { Container, type Provider } from "../container";
+import { Database } from "../db/database";
 import { DatabaseError } from "../db/pg";
 import { DomainError, HttpError, NotFoundError, UnauthorizedError, ValidationError } from "../errors";
 import { pickLocale, translate } from "../i18n/messages";
@@ -9,6 +10,7 @@ import { type Authenticate, USER_KEY } from "./auth";
 import { readBody } from "./body";
 import { Context, RequestData, splitUrl } from "./context";
 import type { ControllerDef } from "./controller";
+import { Lifecycle, type ShutdownHook } from "./lifecycle";
 import { compose, type Middleware } from "./middleware";
 import { json, Reply } from "./reply";
 import { joinPath, Router } from "./router";
@@ -74,6 +76,10 @@ export class App {
   private readonly exposeErrors: boolean;
   private readonly authenticate: Authenticate | null;
   readonly locale: string;
+  /** Open requests, streams and WebSockets of the running server (see `shutdown`). */
+  readonly lifecycle = new Lifecycle();
+  private readonly shutdownHooks: ShutdownHook[] = [];
+  private shutdownPromise: Promise<boolean> | null = null;
 
   constructor(options: AppOptions) {
     this.container = new Container(options.providers ?? []);
@@ -121,6 +127,46 @@ export class App {
       c[r.action] = [r.method, r.path];
     }
     return out;
+  }
+
+  /** Runs `hook` during `shutdown()`, after in-flight requests finished and before the database closes. */
+  onShutdown(hook: ShutdownHook): void {
+    this.shutdownHooks.push(hook);
+  }
+
+  /** True once `shutdown()` started. */
+  get shuttingDown(): boolean {
+    return this.lifecycle.draining;
+  }
+
+  /**
+   * Graceful shutdown: stop accepting connections, close idle keep-alive connections, close WebSockets (1001) and
+   * streams, wait up to `timeout` ms for in-flight requests, run `onShutdown` hooks (last registered first), then
+   * close the database pool. Resolves true if everything drained in time. Safe to call more than once.
+   * `serve()` calls it on SIGTERM/SIGINT and then exits.
+   */
+  shutdown(timeout = 10000): Promise<boolean> {
+    if (this.shutdownPromise === null) this.shutdownPromise = this.runShutdown(timeout);
+    return this.shutdownPromise;
+  }
+
+  private async runShutdown(timeout: number): Promise<boolean> {
+    const life = this.lifecycle;
+    this.logger.info("Shutting down", { inflight: life.inflight, websockets: life.openSockets, streams: life.openStreams });
+    life.stop();
+    const drained = await life.idle(timeout);
+    if (!drained) this.logger.warn(`Shutdown timeout: ${timeout} ms passed with requests still in flight`, { inflight: life.inflight, websockets: life.openSockets });
+    for (let i = this.shutdownHooks.length - 1; i >= 0; i--) {
+      try {
+        await this.shutdownHooks[i]!();
+      } catch (error) {
+        this.logger.error("Shutdown hook failed", { error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+    const db = this.container.peek(Database);
+    if (db !== null) db.close();
+    this.logger.info("Shutdown complete");
+    return drained;
   }
 
   /** Handles one request; never throws. */

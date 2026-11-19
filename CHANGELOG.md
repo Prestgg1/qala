@@ -5,6 +5,8 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 ## Unreleased
 
 ### Added
+- Graceful shutdown: on SIGTERM/SIGINT the server stops accepting connections, closes WebSockets (1001) and streams, waits up to `shutdownTimeout` (default 10 s) for in-flight requests, runs `onShutdown` hooks (`app.onShutdown()`, or `export function onShutdown(app)` in `app/kernel.ts`), closes the database pool and exits (0 if drained, 1 on timeout). Workers are stopped the same way. `app.shutdown(timeout)` does it from code.
+- Request limits in `serve()` options: `headersTimeout` (default 10 s, 408; slowloris protection the native binary did not have), `requestTimeout` (30 s, 408), `keepAliveTimeout` (5 s), `maxHeaderSize` (16 KiB, 431), `wsMaxMessage` (16 MiB, close 1009, now configurable and also applied under Bun). `bodyLimit` (1 MiB, 413) is unchanged.
 - PostgreSQL TLS, configured with libpq's `sslmode` (`disable`, `prefer` (default), `require`, `verify-ca`, `verify-full`) and `sslrootcert` in `DATABASE_URL`; `ssl=true` means `require`. Works in the native binary. `Connection.encrypted` tells whether a session is encrypted. CI runs every mode against a TLS-enabled server, and the native end-to-end suite with `verify-full`.
 - `qala doctor`: checks Bun, Node.js, platform, scriptc, generated code and database reachability.
 - Contribution guide, security policy, issue and PR templates, Renovate config (scriptc bumps get their own PR).
@@ -19,6 +21,8 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - Release process with changesets: a "Version packages" PR, then npm publish and GitHub releases.
 
 ### Changed
+- The server handles SIGTERM/SIGINT itself (see graceful shutdown); `serve(app, { handleSignals: false })` opts out. `startWorkers()` returns a `Workers` handle with `stop(timeout)` instead of installing its own signal handlers.
+- `Pool.close()` (and `Database.close()`) refuse new queries and close connections still in use when they are released.
 - `qala build` deletes the LLVM IR (`main.ll`, tens of MB) scriptc leaves next to the binary; `--keep-ir` keeps it.
 - Docs: the example binary is ~5 MB (the ~3 MB figure predates WebSockets, streaming and CRDT); clang is listed as a requirement.
 - scriptc 0.4.13 → 0.4.14 (no framework changes needed; unit, native and Bun end-to-end suites pass).

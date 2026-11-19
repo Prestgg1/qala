@@ -645,6 +645,7 @@ export class Pool {
   private readonly idle: Connection[] = [];
   private readonly waiting: ((c: Connection) => void)[] = [];
   private size = 0;
+  private shut = false;
 
   constructor(
     private readonly config: ConnectionConfig,
@@ -652,6 +653,7 @@ export class Pool {
   ) {}
 
   async acquire(): Promise<Connection> {
+    if (this.shut) throw new Error("Database pool is closed");
     while (this.idle.length > 0) {
       const c = this.idle.pop()!;
       if (!c.closed) return c;
@@ -672,6 +674,11 @@ export class Pool {
   }
 
   release(c: Connection): void {
+    if (this.shut) {
+      c.close();
+      this.size--;
+      return;
+    }
     if (c.closed) {
       this.size--;
       const waiter = this.waiting.shift();
@@ -711,8 +718,11 @@ export class Pool {
     }
   }
 
+  /** Closes idle connections; connections still in use close when they are released. New queries are refused. */
   close(): void {
+    this.shut = true;
     for (const c of this.idle) c.close();
+    this.size -= this.idle.length;
     this.idle.length = 0;
   }
 }

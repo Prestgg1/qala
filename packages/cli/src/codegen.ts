@@ -103,7 +103,9 @@ export function renderMain(root: string, hasModels = false, hasGeneratedProvider
   // (primary is false in worker processes, so once-per-deployment jobs can be limited to the primary).
   const hasOnStart = /export\s+(async\s+)?function\s+onStart\b|export\s+const\s+onStart\b/.test(kernelSource);
   if (hasOnStart) lines[1] = 'import { createApp, isWorker, serve } from "@qala/core";';
-  if (hasKernel) lines.push(`import { kernel${hasServeOptions ? ", serveOptions" : ""}${hasOnStart ? ", onStart" : ""} } from "${importPath(dir, join(root, LAYOUT.kernel))}";`);
+  // `export function onShutdown(app)` runs on SIGTERM/SIGINT after in-flight requests finished, before the pool closes.
+  const hasOnShutdown = /export\s+(async\s+)?function\s+onShutdown\b|export\s+const\s+onShutdown\b/.test(kernelSource);
+  if (hasKernel) lines.push(`import { kernel${hasServeOptions ? ", serveOptions" : ""}${hasOnStart ? ", onStart" : ""}${hasOnShutdown ? ", onShutdown" : ""} } from "${importPath(dir, join(root, LAYOUT.kernel))}";`);
   // Model event handlers (`on(Task, "created", …)`) register themselves when app/events/*.ts is imported.
   const eventFiles = eventModules(root);
   for (const file of eventFiles) lines.push(`import "${importPath(dir, file)}";`);
@@ -122,6 +124,7 @@ export function renderMain(root: string, hasModels = false, hasGeneratedProvider
   lines.push("});", "");
   // Event handlers and audit/realtime sinks resolve services from the app's container.
   if (bindsEvents) lines.push("bindEvents(app.container);", "");
+  if (hasOnShutdown) lines.push("app.onShutdown(() => onShutdown(app));", "");
   // Port: config/app.ts's `config.port`, else the typed env's PORT (.env.example), else $PORT or 3000.
   const port = hasConfig ? "config.port" : envPort ? "env.PORT" : 'Number(process.env.PORT ?? "3000")';
   const serveCall = hasServeOptions ? `serve(app, { port: ${port}, ...serveOptions })` : `serve(app, { port: ${port} })`;
@@ -160,7 +163,7 @@ export function renderAppOptions(root: string, hasModels = false, hasGeneratedPr
       bindsEvents = true;
       continue;
     }
-    if (line.startsWith("serve(")) continue;
+    if (line.startsWith("serve(") || line.startsWith("app.onShutdown(")) continue;
     out.push(line);
   }
   out.push("/** Call on an app built from appOptions (testApp does this for you when passed `setup`). */");

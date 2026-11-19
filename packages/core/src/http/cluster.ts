@@ -29,14 +29,28 @@ function childArgs(): string[] {
   return argv[0] === process.execPath ? argv.slice(1) : argv.slice(2);
 }
 
+/** The worker processes started by `startWorkers`. */
+export class Workers {
+  constructor(
+    /** Sends SIGTERM to every worker; resolves once all exited, or after `timeout` ms (the rest get SIGKILL). */
+    readonly stop: (timeout: number) => Promise<void>,
+  ) {}
+}
+
 /**
  * Starts `count - 1` copies of this program (env QALA_WORKER=i) next to the current process, which keeps serving as
  * worker 0. Every process listens on the same port with `reusePort` (SO_REUSEPORT) and the kernel balances connections.
- * The primary forwards SIGINT/SIGTERM to the workers, restarts workers that crash, and exits once all of them are gone.
+ * Workers that crash are restarted until `stop` is called; `serve()` calls it on SIGTERM/SIGINT.
  */
-export function startWorkers(count: number): void {
+export function startWorkers(count: number): Workers {
   const children: (ChildProcess | null)[] = [];
   let stopping = false;
+  let allGone: (() => void) | null = null;
+  const alive = (): number => {
+    let n = 0;
+    for (const c of children) if (c !== null && c !== undefined) n++;
+    return n;
+  };
   const launch = (index: number): void => {
     const env: Record<string, string | undefined> = { ...process.env };
     env[WORKER_ENV] = String(index);
@@ -45,7 +59,7 @@ export function startWorkers(count: number): void {
     child.on("exit", () => {
       children[index] = null;
       if (stopping) {
-        if (children.every((c) => c === null || c === undefined)) process.exit(0);
+        if (alive() === 0 && allGone !== null) allGone();
         return;
       }
       setTimeout(() => {
@@ -54,21 +68,25 @@ export function startWorkers(count: number): void {
     });
   };
   for (let i = 1; i < count; i++) launch(i);
-  const stop = (): void => {
-    if (stopping) return;
+  const stop = (timeout: number): Promise<void> => {
     stopping = true;
-    let alive = 0;
-    for (const c of children) {
-      if (c !== null && c !== undefined) {
-        alive++;
-        c.kill("SIGTERM");
-      }
-    }
-    if (alive === 0) process.exit(0);
-    setTimeout(() => process.exit(0), 5000);
+    if (alive() === 0) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      let done = false;
+      const finish = (): void => {
+        if (done) return;
+        done = true;
+        resolve();
+      };
+      allGone = finish;
+      for (const c of children) if (c !== null && c !== undefined) c.kill("SIGTERM");
+      setTimeout(() => {
+        for (const c of children) if (c !== null && c !== undefined) c.kill("SIGKILL");
+        finish();
+      }, timeout);
+    });
   };
-  process.on("SIGINT", stop);
-  process.on("SIGTERM", stop);
+  return new Workers(stop);
 }
 
 /** In a worker: exit when the primary is gone (e.g. killed with SIGKILL), so no orphans keep the port. */

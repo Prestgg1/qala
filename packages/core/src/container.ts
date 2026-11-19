@@ -76,6 +76,12 @@ export class Container {
     return this.resolve(token) as T;
   }
 
+  /** The singleton for `token` if it was already created, else null (never creates one). */
+  peek<T>(token: Token<T>): T | null {
+    if (!this.instances.has(token)) return null;
+    return this.instances.get(token) as T;
+  }
+
   resolve(token: unknown): unknown {
     const provider = this.providers.get(token);
     if (provider === undefined) {

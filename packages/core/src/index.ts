@@ -6,7 +6,8 @@ export { action, get, post, put, patch, del, toReply, ActionDef, type Action, ty
 export { controller, ControllerDef, type Controller, type ControllerOptions } from "./http/controller";
 export { compose, type Middleware } from "./http/middleware";
 export { App, Route, createApp, type AppOptions, type ControllerEntry, type ErrorHandler } from "./http/app";
-export { serve, type ServeOptions } from "./http/server";
+export { serve, serverLimits, ServerLimits, type ServeOptions } from "./http/server";
+export { Lifecycle, type ShutdownHook } from "./http/lifecycle";
 export { Router, joinPath } from "./http/router";
 export { Container, Provider, singleton, transient, value, type Token, type Lifetime } from "./container";
 export { cors, requestLogger, securityHeaders, rateLimit, type CorsOptions, type RateLimitOptions } from "./middleware/index";
@@ -20,7 +21,7 @@ export { DatabaseError, parseUrl, Pool, Connection, QueryResult, RawResult, Conn
 // mail
 export { SmtpClient, SmtpError, SendResult, buildMessage, parseAddress, encodeWords, quotedPrintable, dotStuff, type SmtpOptions, type MailMessage } from "./mail/smtp";
 // cluster
-export { resolveWorkers, isWorker, startWorkers, watchParent, WORKER_ENV } from "./http/cluster";
+export { resolveWorkers, isWorker, startWorkers, watchParent, Workers, WORKER_ENV } from "./http/cluster";
 // orm (run time: compiled queries from .qala/queries.gen.ts; the builder lives in @qala/core/query)
 export { run, batch, step, compiled, pgArray, groupPush, CompiledQuery, QueryStep, type Query, type QueryParamsOf, type QueryResultOf, type BatchEntry, type BatchRunner, type ParamMapper, type Assembler } from "./orm/runtime";
 // body
@@ -30,7 +31,7 @@ export { readBody, ParsedBody } from "./http/body";
 // stream
 export { stream, sse, StreamReply, StreamSink, StreamWriter, SseWriter, type SseEvent, type StreamOptions } from "./http/stream";
 // websocket
-export { ws, WsSocket, WsHandlers, WsSender, WsConnection, WsTransport, encodeFrame, acceptKey, type WsRoute } from "./http/websocket";
+export { ws, WsSocket, WsHandlers, WsSender, WsConnection, WsTransport, encodeFrame, acceptKey, MAX_MESSAGE, type WsRoute } from "./http/websocket";
 export { Upgrade } from "./http/app";
 // password
 export { hashPassword, verifyPassword, type PasswordOptions } from "./crypto/password";
