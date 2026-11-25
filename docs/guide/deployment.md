@@ -134,12 +134,19 @@ qala migrate --lock-timeout 5s --statement-timeout 10min
 
 If a release goes wrong, `qala migrate:rollback` (or `--steps N`) runs the `-- migrate:down` sections of the most recent migrations; `qala migrate:status` shows what is applied. See [Migrations](./migrations.md#rolling-back).
 
+## Observability
+
+Request ids (`x-request-id`), JSON request logs and the built-in `/health` and `/ready` probes are described in
+[Observability](/guide/observability). `/ready` answers 503 as soon as shutdown starts, so a load balancer stops sending
+traffic while in-flight requests drain.
+
 ## Production checklist
 
 - [ ] `LOG_FORMAT=json` (if your app reads it) so logs are machine-readable
 - [ ] Secrets come from the environment, never from a committed `.env`
 - [ ] TLS terminates at a reverse proxy; `DATABASE_URL` uses `sslmode=verify-full`
-- [ ] A `/health` route exists and the orchestrator probes it
+- [ ] The orchestrator probes `/health` (liveness) and `/ready` (readiness); see [Observability](/guide/observability)
+- [ ] The proxy forwards or sets `x-request-id`, so logs can be joined across services
 - [ ] Migrations run once, before the rollout
 - [ ] `rateLimit` is per process: with `workers: "auto"` the effective limit is multiplied by the core count
 - [ ] Build and runtime use the same architecture (build arm64 on arm64)

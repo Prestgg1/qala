@@ -30,7 +30,6 @@ bun run bench               # native vs Bun (needs oha and taskset)
 $ qala routes
 POST   /comments            comments.store
 DELETE /comments/:id        comments.destroy
-GET    /health              health.index
 GET    /tasks               tasks.index
 GET    /tasks/:id           tasks.show
 POST   /tasks               tasks.store
@@ -40,7 +39,8 @@ POST   /tasks/:id/complete  tasks.complete
 GET    /tasks/:id/comments  tasks.comments
 ```
 
-Writes need `Authorization: Bearer $API_TOKEN`; reads are public.
+Writes need `Authorization: Bearer $API_TOKEN`; reads are public. `GET /health` and `GET /ready` are built into the
+framework ([Observability](../../docs/guide/observability.md)).
 
 ## Layout
 
@@ -58,7 +58,6 @@ app/
   http/controllers/
     tasks.controller.ts      → /tasks      (class controller; writes are `auth: true`)
     (auth)/comments.controller.ts → /comments (the (auth) folder makes every action require a user)
-    health.controller.ts     → /health
   auth.ts                    authenticate(ctx): the bearer token → AppUser (typed `user` in handlers)
   kernel.ts                  global middleware + error handler (unique violation → 409 "conflict")
 .env.example                 typed env: PORT=3000 # type: number … → .qala/env.gen.ts (DATABASE_URL also provides Database)

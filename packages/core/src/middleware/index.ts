@@ -39,7 +39,10 @@ export function cors(options: CorsOptions = {}): Middleware {
   };
 }
 
-/** One log line per request: method, path, status and duration. */
+/**
+ * One log line per request with `request_id`, `method`, `path`, `status` and `duration_ms`
+ * (one JSON object per line with `new Logger(level, "json")`).
+ */
 export function requestLogger(logger: Logger): Middleware {
   return async (ctx, next) => {
     let status = 500;
@@ -51,7 +54,13 @@ export function requestLogger(logger: Logger): Middleware {
       status = error instanceof Error && "status" in error && typeof error.status === "number" ? error.status : 500;
       throw error;
     } finally {
-      logger.info(`${ctx.method} ${ctx.path}`, { status, ms: Date.now() - ctx.startedAt });
+      const fields: Record<string, unknown> = {};
+      if (ctx.requestId !== "") fields["request_id"] = ctx.requestId;
+      fields["method"] = ctx.method;
+      fields["path"] = ctx.path;
+      fields["status"] = status;
+      fields["duration_ms"] = Date.now() - ctx.startedAt;
+      logger.info(`${ctx.method} ${ctx.path}`, fields);
     }
   };
 }
