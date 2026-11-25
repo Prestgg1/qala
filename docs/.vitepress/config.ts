@@ -63,6 +63,7 @@ export default defineConfig({
         items: [
           { text: "Writing code for scriptc", link: "/guide/native" },
           { text: "Deployment", link: "/guide/deployment" },
+          { text: "Observability", link: "/guide/observability" },
           { text: "qala check", link: "/guide/check" },
         ],
       },

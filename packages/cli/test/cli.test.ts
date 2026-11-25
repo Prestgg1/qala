@@ -233,6 +233,8 @@ describe("make:*", () => {
     expect(makeMigration(root, "create_notes").created).toEqual(["database/migrations/0001_create_notes.sql"]);
     expect(makeMigration(root, "add index").created).toEqual(["database/migrations/0002_add_index.sql"]);
     expect(readFileSync(join(root, "database/migrations/0001_create_notes.sql"), "utf8")).toContain("create table notes");
+    expect(readFileSync(join(root, "database/migrations/0001_create_notes.sql"), "utf8")).toContain("-- migrate:down\ndrop table notes;");
+    expect(readFileSync(join(root, "database/migrations/0002_add_index.sql"), "utf8")).toContain("-- migrate:down\n");
     // make:controller --resource writes resource(Model) and the model it needs.
     expect(readFileSync(join(root, "app/http/controllers/notes.controller.ts"), "utf8")).toContain('export const NotesController = resource(Note, { defaultOrder: ["createdAt", "desc"] });');
     expect(readFileSync(join(root, "app/domain/note.ts"), "utf8")).toContain("id: t.uuid().primary(),");
@@ -339,6 +341,22 @@ describe("onStart hook", () => {
     expect(main.indexOf("app.onShutdown")).toBeLessThan(main.indexOf("serve(app"));
     writeFileSync(join(root, "app/kernel.ts"), "export const kernel = {};\n");
     expect(renderMain(root)).not.toContain("onShutdown");
+  });
+
+  test("main.ts passes the kernel's health / readyTimeout / requestId options", async () => {
+    const { renderMain } = await import("../src/codegen");
+    const { mkdtempSync, mkdirSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const root = mkdtempSync(join(tmpdir(), "qala-health-"));
+    mkdirSync(join(root, "app"), { recursive: true });
+    writeFileSync(join(root, "app/kernel.ts"), "export const kernel = { health: false, readyTimeout: 500 };\n");
+    const main = renderMain(root);
+    expect(main).toContain("  health: kernel.health,");
+    expect(main).toContain("  readyTimeout: kernel.readyTimeout,");
+    expect(main).not.toContain("requestId");
+    writeFileSync(join(root, "app/kernel.ts"), "export const kernel = {};\n");
+    expect(renderMain(root)).not.toContain("health");
   });
 });
 
