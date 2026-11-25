@@ -60,7 +60,7 @@ export class Env {
   }
 
   assert(): void {
-    if (this.missing.length > 0) throw new Error(`Missing or invalid environment variables: ${this.missing.join(", ")}`);
+    if (this.missing.length > 0) throw new Error(`Missing or invalid environment variables: ${this.missing.join(", ")}. Fix: set them in .env or the environment (.env.example lists every variable and its type)`);
   }
 }
 

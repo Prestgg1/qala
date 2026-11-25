@@ -33,6 +33,7 @@ export default defineConfig({
           { text: "What is Qala", link: "/guide/introduction" },
           { text: "Getting started", link: "/guide/getting-started" },
           { text: "Project layout", link: "/guide/project-layout" },
+          { text: "Using Qala with AI agents", link: "/guide/ai" },
         ],
       },
       {

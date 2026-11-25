@@ -26,12 +26,17 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - `testApp({ setup })` runs a hook on the built app (binds model events).
 - Benchmark workflow (weekly, on demand, or PRs labelled `bench`); `bench/run.ts --json --check` fails when native and Bun answer differently or native drops below 80% of Bun's req/s.
 - Release process with changesets: a "Version packages" PR, then npm publish and GitHub releases.
+- `qala new` writes `AGENTS.md` (layout, conventions, commands, native rules, "check and build before finishing") and a `CLAUDE.md` importing it. The repository has a root `AGENTS.md` for contributors.
+- `--json` on `qala check`, `qala routes` and `qala doctor`: one versioned JSON document on stdout (errors too); exit codes documented. `qala check` diagnostics have stable codes (`QALA101`–`QALA106` layer rules, `QALA201`–`QALA207` scriptc pitfalls) with file, line, column, a fix hint and a docs link.
+- Docs: "Using Qala with AI agents" (`docs/guide/ai.md`).
 
 ### Changed
 - The server handles SIGTERM/SIGINT itself (see graceful shutdown); `serve(app, { handleSignals: false })` opts out. `startWorkers()` returns a `Workers` handle with `stop(timeout)` instead of installing its own signal handlers.
 - `Pool.close()` (and `Database.close()`) refuse new queries and close connections still in use when they are released.
 - `qala build` deletes the LLVM IR (`main.ll`, tens of MB) scriptc leaves next to the binary; `--keep-ir` keeps it.
 - Docs: the example binary is ~5 MB (the ~3 MB figure predates WebSockets, streaming and CRDT); clang is listed as a requirement.
+- scriptc 0.4.13 → 0.4.14 (no framework changes needed; unit, native and Bun end-to-end suites pass).
+- Error messages name the file and the fix: a failed scriptc build lists the usual causes and `bunx scriptc coverage`; `No provider registered for X` says to run `qala generate`, extend X in `app/infrastructure` or bind it in `app/providers.ts`; missing environment variables, a missing `authenticate` hook and unknown `resource()` fields/actions say what to change. `qala check` text output ends each violation with its code and prints a fix hint per code.
 - scriptc 0.4.13 → 0.4.14 → 0.4.16 (no framework changes needed; unit, native and Bun end-to-end suites pass). 0.4.15 is skipped: its npm runtime packs were incompatible with the CLI.
 
 ### Fixed

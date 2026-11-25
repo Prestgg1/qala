@@ -44,7 +44,8 @@ const WHY: Record<Exclude<Layer, "root">, string> = {
   shared: "shared code must stay dependency-free",
 };
 
-export type Violation = { file: string; line: number; layer: Layer; target: string; message: string };
+/** `code` is stable (QALA1xx, see docs/guide/check.md); `line` and `column` are 1-based. */
+export type Violation = { code: string; file: string; line: number; column: number; layer: Layer; target: string; message: string };
 
 function packageName(spec: string): string {
   if (spec.startsWith("@")) return spec.split("/").slice(0, 2).join("/");
@@ -60,11 +61,13 @@ function resolveImport(fromFile: string, spec: string): string {
 }
 
 /** Module specifiers a file imports or re-exports, with their lines (type-only imports included: they couple layers too). */
-export function importsOf(file: string): { spec: string; line: number }[] {
+export function importsOf(file: string): { spec: string; line: number; column: number }[] {
   const source = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.ES2022, true, ts.ScriptKind.TS);
-  const out: { spec: string; line: number }[] = [];
+  const out: { spec: string; line: number; column: number }[] = [];
   const add = (node: ts.Node, spec: ts.Expression | undefined) => {
-    if (spec !== undefined && ts.isStringLiteral(spec)) out.push({ spec: spec.text, line: source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1 });
+    if (spec === undefined || !ts.isStringLiteral(spec)) return;
+    const pos = source.getLineAndCharacterOfPosition(node.getStart(source));
+    out.push({ spec: spec.text, line: pos.line + 1, column: pos.character + 1 });
   };
   const visit = (node: ts.Node): void => {
     if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) add(node, node.moduleSpecifier);
@@ -90,27 +93,28 @@ export function checkArchitecture(root: string): { files: number; violations: Vi
     const relFile = rel(root, file);
     const layer = layerOf(relFile);
     if (layer === null || layer === "root") continue;
-    for (const { spec, line } of importsOf(file)) {
+    for (const { spec, line, column } of importsOf(file)) {
+      const at = { file: relFile, line, column, layer };
       if (spec.startsWith(".") || spec.startsWith("/")) {
         const target = resolveImport(file, spec);
         const targetRel = rel(root, target);
         const targetLayer = layerOf(targetRel);
         const typeOnly = isTypeOnly(file, line);
         if (targetRel.startsWith(`${LAYOUT.generated}/queries.gen`) && layer !== "infrastructure") {
-          violations.push({ file: relFile, line, layer, target: targetRel, message: `${layer} imports compiled queries; only app/infrastructure runs SQL (wrap it in a repository)` });
+          violations.push({ ...at, code: "QALA105", target: targetRel, message: `${layer} imports compiled queries; only app/infrastructure runs SQL (wrap it in a repository)` });
           continue;
         }
         if (targetRel.endsWith(".query.ts") && !typeOnly && !relFile.startsWith("app/infrastructure/queries/")) {
-          violations.push({ file: relFile, line, layer, target: targetRel, message: `query declarations are build-time only; import the compiled query from .qala/queries.gen instead` });
+          violations.push({ ...at, code: "QALA106", target: targetRel, message: `query declarations are build-time only; import the compiled query from .qala/queries.gen instead` });
           continue;
         }
         if (targetLayer === "root") {
-          violations.push({ file: relFile, line, layer, target: targetRel, message: `${layer} imports the composition root ${targetRel}; only .qala/main.ts wires the app` });
+          violations.push({ ...at, code: "QALA103", target: targetRel, message: `${layer} imports the composition root ${targetRel}; only .qala/main.ts wires the app` });
         } else if (targetLayer === null) {
           if (!targetRel.startsWith("app/") && !targetRel.startsWith("..")) continue;
-          violations.push({ file: relFile, line, layer, target: targetRel, message: `${layer} imports ${targetRel}, which is outside the layers (app/domain, app/application, app/infrastructure, app/http, app/shared)` });
+          violations.push({ ...at, code: "QALA104", target: targetRel, message: `${layer} imports ${targetRel}, which is outside the layers (app/domain, app/application, app/infrastructure, app/http, app/shared)` });
         } else if (!ALLOWED[layer].includes(targetLayer)) {
-          violations.push({ file: relFile, line, layer, target: targetRel, message: `${layer} must not import ${targetLayer} (${targetRel}): ${WHY[layer]}` });
+          violations.push({ ...at, code: "QALA101", target: targetRel, message: `${layer} must not import ${targetLayer} (${targetRel}): ${WHY[layer]}` });
         }
         continue;
       }
@@ -118,7 +122,7 @@ export function checkArchitecture(root: string): { files: number; violations: Vi
       if (allowed.includes("*")) continue;
       const pkg = packageName(spec);
       if (!allowed.includes(pkg)) {
-        violations.push({ file: relFile, line, layer, target: spec, message: `${layer} must not import the package "${spec}": ${layer === "domain" ? "keep the domain pure" : "wrap it in app/infrastructure behind an abstract class from app/domain"}` });
+        violations.push({ ...at, code: "QALA102", target: spec, message: `${layer} must not import the package "${spec}": ${layer === "domain" ? "keep the domain pure" : "wrap it in app/infrastructure behind an abstract class from app/domain"}` });
       }
     }
   }

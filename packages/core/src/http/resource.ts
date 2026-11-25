@@ -71,7 +71,7 @@ export function scopeParams(scope: string | undefined): string[] {
 
 function fieldOf(model: ModelDef, key: string): SchemaNode {
   const i = model.indexOf(key);
-  if (i === -1) throw new Error(`resource(${model.table}): "${key}" is not a field of the model`);
+  if (i === -1) throw new Error(`resource(${model.table}): "${key}" is not a field of the model (fields: ${model.keys.join(", ")}); fix the option that names it in the resource() call`);
   return model.fields[i]!;
 }
 

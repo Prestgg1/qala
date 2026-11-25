@@ -2,6 +2,7 @@
 import { resolve } from "node:path";
 import { checkArchitecture } from "./check";
 import { generate, writeOpenApi } from "./codegen";
+import { checkJson, errorJson, printViolations, routesJson } from "./diagnostics";
 import { doctorCommand } from "./doctor";
 import { fixApp } from "./fix";
 import type { SkippedModel } from "./models";
@@ -22,8 +23,8 @@ ${color.bold("Develop")}
   generate                    write .qala/routes.gen.ts, api.ts, models.gen.ts, main.ts
   openapi [--out openapi.json] [--yaml]
                               generate, then write the app's OpenAPI 3.1 document
-  routes                      list every route (METHOD PATH controller.action)
-  check [--fix]               enforce the Clean Architecture dependency rule; --fix rewrites scriptc pitfalls first
+  routes [--json]             list every route (METHOD PATH controller.action)
+  check [--fix] [--json]      enforce the Clean Architecture dependency rule; --fix rewrites scriptc pitfalls first
   migrate [--lock-timeout 5s] [--statement-timeout 5min]
                               apply pending database/migrations/*.sql (under an advisory lock)
   migrate:rollback [--steps N]  undo the last N (default 1) migrations with their -- migrate:down sections
@@ -50,8 +51,11 @@ ${color.bold("Scaffold")}
                               migration that creates the @qala/jobs table
   (make:* accept --force to overwrite)
 
-  doctor                      check Bun, Node.js, scriptc, clang, project files and database
+  doctor [--json]             check Bun, Node.js, scriptc, clang, project files and database
   help                        this text
+
+${color.bold("Machine-readable")}  --json on check, routes and doctor prints one JSON document (see docs/guide/ai.md).
+Exit codes: 0 success, 1 failure (violations, failed checks, errors).
 `;
 
 type Args = { positional: string[]; flags: Map<string, string | true> };
@@ -146,20 +150,28 @@ export async function main(argv: string[]): Promise<number> {
       return 0;
     }
     case "doctor":
-      return doctorCommand();
+      return doctorCommand({ json: args.flags.get("json") === true });
     case "routes":
-      printRoutes(findRoot());
+      if (args.flags.get("json") === true) console.log(JSON.stringify(routesJson(routeTable(scanControllers(findRoot()))), null, 2));
+      else printRoutes(findRoot());
       return 0;
     case "check": {
       const root = findRoot();
-      if (args.flags.get("fix") === true) {
-        const report = fixApp(root);
+      const json = args.flags.get("json") === true;
+      const report = args.flags.get("fix") === true ? fixApp(root) : null;
+      if (json) {
+        const { files, violations } = checkArchitecture(root);
+        const doc = checkJson(files, violations, report);
+        console.log(JSON.stringify(doc, null, 2));
+        return doc.ok ? 0 : 1;
+      }
+      if (report !== null) {
         for (const f of report.fixes) console.log(`${color.green("fixed")} ${f.file}:${f.line}  ${f.message}`);
-        for (const f of report.unfixable) console.log(color.yellow(`note: ${f.file}:${f.line}  ${f.message}`));
+        for (const f of report.unfixable) console.log(color.yellow(`note: ${f.file}:${f.line}  ${f.message} [${f.code}]`));
         if (report.fixes.length > 0) console.log(color.dim(`${report.fixes.length} fix(es) in ${report.files.length} file(s)`));
       }
       const { files, violations } = checkArchitecture(root);
-      for (const v of violations) console.error(`${color.red("✗")} ${v.file}:${v.line}  ${v.message}`);
+      printViolations(violations, color);
       if (violations.length > 0) {
         console.error(color.red(`\n${violations.length} architecture violation(s) in ${files} files.`));
         return 1;
@@ -227,7 +239,8 @@ if (import.meta.main) {
   main(process.argv.slice(2)).then(
     (code) => process.exit(code),
     (error: unknown) => {
-      if (error instanceof CliError) console.error(color.red(error.message));
+      if (process.argv.includes("--json")) console.log(JSON.stringify(errorJson(error instanceof Error ? error.message : String(error)), null, 2));
+      else if (error instanceof CliError) console.error(color.red(error.message));
       else console.error(error);
       process.exit(1);
     },

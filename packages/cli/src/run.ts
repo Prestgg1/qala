@@ -5,6 +5,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { checkArchitecture } from "./check";
 import { generate } from "./codegen";
+import { DOCS, printViolations } from "./diagnostics";
 import { nativeArgs } from "./native";
 import { CliError, LAYOUT, color, findBin, formatBytes } from "./util";
 import { appDatabaseUrl } from "./database-url";
@@ -46,8 +47,8 @@ export function build(root: string, options: BuildOptions): number {
   if (options.skipCheck !== true) {
     const { violations } = checkArchitecture(root);
     if (violations.length > 0) {
-      for (const v of violations) console.error(`${color.red("✗")} ${v.file}:${v.line}  ${v.message}`);
-      throw new CliError(`Build stopped: ${violations.length} architecture violation(s). Fix them or pass --skip-check.`);
+      printViolations(violations, color);
+      throw new CliError(`Build stopped: ${violations.length} architecture violation(s) (listed above with file:line). Fix them, re-run qala check, or pass --skip-check.`);
     }
   }
   const { controllers, models, queries, providers, diWarnings } = generate(root);
@@ -65,13 +66,30 @@ export function build(root: string, options: BuildOptions): number {
   console.log(color.dim(`$ scriptc ${args.join(" ")}`));
   const started = Date.now();
   const result = spawnSync(scriptc, args, { cwd: root, stdio: "inherit" });
-  if (result.status !== 0) return result.status ?? 1;
+  if (result.status !== 0) {
+    console.error(scriptcFailureHint(result.status));
+    return result.status ?? 1;
+  }
   // scriptc leaves its LLVM IR (tens of MB) next to the binary; it is only useful for debugging the compiler.
   if (options.keepIr !== true) for (const ir of irFiles(out)) rmSync(ir, { force: true });
   const seconds = ((Date.now() - started) / 1000).toFixed(1);
   const routes = controllers.reduce((n, c) => n + c.actions.length, 0);
   console.log(`${color.green("✓")} ${options.out}  ${formatBytes(statSync(out).size)}  ${routes} routes  ${seconds}s  (native, no Node.js runtime)`);
   return 0;
+}
+
+/** What to do when scriptc fails: its own errors (above) name the file; these are the usual causes. */
+export function scriptcFailureHint(status: number | null): string {
+  return [
+    color.red(`✗ scriptc failed (exit ${status ?? "signal"}): the native build stopped. Its errors above name the file and line.`),
+    "  Usual causes, in order:",
+    "  1. Code outside the native subset: run `qala check --fix` (default imports/exports, async overrides of abstract methods, untyped [] ...).",
+    "  2. Union pitfalls (SC2003 and friends): narrow before casting into a union (`if (x === null) ...; x as Row`), annotate factory return types.",
+    "  3. Object-literal methods with default parameters: make them class methods.",
+    "  4. A package without .d.ts, or `export * from \"pkg\"`: use named imports/exports.",
+    "  See what compiles and why not: bunx scriptc coverage .qala/main.ts",
+    `  Rules: ${DOCS}/guide/native`,
+  ].join("\n");
 }
 
 /** The LLVM IR files scriptc writes beside `out` (`main.ll`, and `<name>.ll` for good measure). */
