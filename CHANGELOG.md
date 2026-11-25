@@ -5,6 +5,8 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 ## Unreleased
 
 ### Added
+- `@qala/openapi` and `qala openapi [--out openapi.json] [--yaml]`: an OpenAPI 3.1 document built from the app's routes, `params`/`query`/`body` schemas (as JSON Schema with lengths, bounds, patterns, enums, formats), `auth`, the conventional statuses (201/204/401/403/404/422) and the standard error envelope; `resource()` responses use the model. Hand-written handlers' response bodies are not inferred. Opt in with `"qala": { "openapi": true }` in package.json to have `qala generate` write `.qala/openapi.json`, and `{ "serve": true }` to serve it at `GET /openapi.json` (a pre-generated string, so it works in the native binary). See docs/guide/openapi.md.
+- `SchemaNode.rules` (declared min/max, pattern, enum values, array item) and `ControllerDef.resource` (a `resource()`'s model, filters, policy), kept for documentation tools.
 - `@qala/jobs` (new package, 0.1.0): a PostgreSQL-backed job queue. `defineJob(name, schema, handler)` declares typed, validated jobs; `jobs.enqueue(job, payload, { delay, queue, maxAttempts, tx })` enqueues, inside a transaction too (outbox: the job and its NOTIFY exist only if the transaction commits). Workers claim with `FOR UPDATE SKIP LOCKED`, run `concurrency` jobs at once, wake on LISTEN/NOTIFY and poll for delayed jobs, retry with exponential backoff, mark jobs dead after `max_attempts` and recover jobs whose lock outlived `visibilityTimeout`. `jobs.start(app)` stops the worker gracefully on `app.shutdown()`. Works in the native binary (tested in CI). Guide: docs/guide/jobs.md.
 - `qala make:job <name>` (job file in `app/application/jobs/`) and `qala make:jobs-table [--table]` (migration for the jobs table). `qala check` allows `@qala/jobs` in `app/application`.
 - New package `@qala/session`: server-side sessions in PostgreSQL (random 32-byte tokens stored as SHA-256, `__Host-` HttpOnly Secure SameSite=Lax cookie, idle and absolute expiry, token rotation on login, "log out everywhere", background cleanup of expired rows) and `csrf()` middleware (session-bound masked synchronizer token in `x-csrf-token` or `_csrf`, Origin/Sec-Fetch-Site checks, bearer requests exempt, constant-time comparison). Compiles natively with scriptc; see docs/guide/sessions.md.
@@ -31,6 +33,9 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - `qala build` deletes the LLVM IR (`main.ll`, tens of MB) scriptc leaves next to the binary; `--keep-ir` keeps it.
 - Docs: the example binary is ~5 MB (the ~3 MB figure predates WebSockets, streaming and CRDT); clang is listed as a requirement.
 - scriptc 0.4.13 → 0.4.14 → 0.4.16 (no framework changes needed; unit, native and Bun end-to-end suites pass). 0.4.15 is skipped: its npm runtime packs were incompatible with the CLI.
+
+### Fixed
+- A `resource()` in a `controllers/(auth)/` folder lost its name (404s said "Not found" instead of "Label not found"): `ControllerDef.withAuth()` now keeps it.
 
 ## 0.1.0
 

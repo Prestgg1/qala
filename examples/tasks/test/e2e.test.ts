@@ -5,6 +5,7 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { ApiError } from "@qala/client";
 import { Database } from "@qala/core";
@@ -158,6 +159,18 @@ describe(`tasks API (${ON_BUN ? "bun" : "native binary"})`, () => {
   test("unknown routes and methods", async () => {
     expect((await fetch(`${BASE}/nope`)).status).toBe(404);
     expect((await fetch(`${BASE}/tasks`, { method: "PUT", headers: { authorization: `Bearer ${TOKEN}` } })).status).toBe(405);
+  });
+
+  test("serves the generated OpenAPI document at /openapi.json", async () => {
+    const res = await fetch(`${BASE}/openapi.json`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("application/json");
+    const doc = (await res.json()) as { openapi: string; paths: Record<string, Record<string, unknown>> };
+    expect(doc.openapi).toBe("3.1.0");
+    expect(Object.keys(doc.paths["/tasks/{id}"] ?? {}).sort()).toEqual(["delete", "get", "patch"]);
+    // The route documents the app, not itself; the body is the pre-generated file, byte for byte.
+    expect(doc.paths["/openapi.json"]).toBeUndefined();
+    expect(doc).toEqual(JSON.parse(readFileSync(join(ROOT, ".qala/openapi.json"), "utf8")));
   });
 
   // Last: stops the server. The database pool closes and the process exits 0 (in-flight requests and WebSockets

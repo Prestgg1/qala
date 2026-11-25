@@ -137,3 +137,12 @@ function expectType<T extends true>(_: T): void {}
 type ActionsOf<C> = C extends { readonly __actions?: () => infer A } ? A : never;
 expectType<Equal<keyof ActionsOf<typeof LabelsController>, "index" | "show" | "store" | "update" | "destroy" | "archive">>(true);
 expectType<Equal<keyof ActionsOf<typeof ReadOnlyBoards>, "index" | "show">>(true);
+
+test("withAuth() (controllers/(auth)/ folders) keeps the resource name and model", () => {
+  const guarded = ReadOnlyBoards.withAuth();
+  expect(guarded.auth).toBe(true);
+  expect(guarded.resourceName).toBe("T res board");
+  expect(guarded.resource?.model.table).toBe("t_res_boards");
+  expect(LabelsController.resource?.filters).toEqual(["color", "archived"]);
+  expect(LabelsController.resource?.hasPolicy).toBe(true);
+});

@@ -57,6 +57,7 @@ export default defineConfig({
           { text: "Background jobs", link: "/guide/jobs" },
           { text: "Config", link: "/guide/config" },
           { text: "Testing", link: "/guide/testing" },
+          { text: "OpenAPI", link: "/guide/openapi" },
         ],
       },
       {

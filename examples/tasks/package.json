@@ -26,5 +26,11 @@
   },
   "trustedDependencies": [
     "scriptc"
-  ]
+  ],
+  "qala": {
+    "openapi": {
+      "title": "Tasks API",
+      "serve": true
+    }
+  }
 }
