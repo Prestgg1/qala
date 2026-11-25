@@ -5,9 +5,9 @@ import { generate, writeOpenApi } from "./codegen";
 import { doctorCommand } from "./doctor";
 import { fixApp } from "./fix";
 import type { SkippedModel } from "./models";
-import { makeController, makeMiddleware, makeMigration, makeModel, makeRepository, makeService, makeTest, type MakeResult } from "./make";
+import { makeController, makeJob, makeJobsTable, makeMiddleware, makeMigration, makeModel, makeRepository, makeService, makeTest, type MakeResult } from "./make";
 import { pullCommand } from "./pull";
-import { build, dev, migrateCommand, start } from "./run";
+import { build, dev, migrateCommand, rollbackCommand, start, statusCommand } from "./run";
 import { migrateMakeCommand } from "./migrate-make";
 import { routeTable, scanControllers } from "./scan";
 import { scaffold } from "./scaffold";
@@ -24,7 +24,10 @@ ${color.bold("Develop")}
                               generate, then write the app's OpenAPI 3.1 document
   routes                      list every route (METHOD PATH controller.action)
   check [--fix]               enforce the Clean Architecture dependency rule; --fix rewrites scriptc pitfalls first
-  migrate                     apply database/migrations/*.sql
+  migrate [--lock-timeout 5s] [--statement-timeout 5min]
+                              apply pending database/migrations/*.sql (under an advisory lock)
+  migrate:rollback [--steps N]  undo the last N (default 1) migrations with their -- migrate:down sections
+  migrate:status              list migrations: applied or pending
   migrate:make <name> [--print]  write the SQL that makes the database match the models
   db:pull [--schema public] [--tables a,b] [--out app/domain/schema] [--url postgres://...] [--force]
                               generate models from an existing PostgreSQL database
@@ -42,6 +45,9 @@ ${color.bold("Scaffold")}
   make:service <name>         application service, registered in providers
   make:middleware <name>
   make:migration <name>
+  make:job <name>             background job (@qala/jobs) in app/application/jobs
+  make:jobs-table [--table qala_jobs]
+                              migration that creates the @qala/jobs table
   (make:* accept --force to overwrite)
 
   doctor                      check Bun, Node.js, scriptc, clang, project files and database
@@ -67,7 +73,7 @@ function parseArgs(argv: string[]): Args {
   return { positional, flags };
 }
 
-const VALUE_FLAGS = new Set(["out", "optimization", "core", "schema", "tables", "url"]);
+const VALUE_FLAGS = new Set(["out", "optimization", "core", "schema", "tables", "url", "steps", "lock-timeout", "statement-timeout"]);
 
 function flag(args: Args, name: string): string | undefined {
   const v = args.flags.get(name);
@@ -168,7 +174,11 @@ export async function main(argv: string[]): Promise<number> {
     case "start":
       return start(findRoot(), flag(args, "out") ?? "dist/app");
     case "migrate":
-      return migrateCommand(findRoot());
+      return migrateCommand(findRoot(), { lockTimeout: flag(args, "lock-timeout"), statementTimeout: flag(args, "statement-timeout") });
+    case "migrate:rollback":
+      return rollbackCommand(findRoot(), Number(flag(args, "steps") ?? "1"), { lockTimeout: flag(args, "lock-timeout"), statementTimeout: flag(args, "statement-timeout") });
+    case "migrate:status":
+      return statusCommand(findRoot());
     case "migrate:make":
       return migrateMakeCommand(findRoot(), needName("add_due_dates"), { print: args.flags.get("print") === true });
     case "db:pull": {
@@ -198,6 +208,12 @@ export async function main(argv: string[]): Promise<number> {
       return 0;
     case "make:test":
       printMake(makeTest(findRoot(), needName("tasks"), force));
+      return 0;
+    case "make:job":
+      printMake(makeJob(findRoot(), needName("send-welcome"), force));
+      return 0;
+    case "make:jobs-table":
+      printMake(makeJobsTable(findRoot(), flag(args, "table") ?? "qala_jobs"));
       return 0;
     case "make:migration":
       printMake(makeMigration(findRoot(), needName("create_tasks")));

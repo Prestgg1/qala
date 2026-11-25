@@ -7,8 +7,9 @@ import { Logger } from "../log";
 import type { Issue, SchemaNode } from "../schema";
 import type { ActionDef, RuntimeInput } from "./action";
 import { type Authenticate, USER_KEY } from "./auth";
+import { randomBytes } from "node:crypto";
 import { readBody } from "./body";
-import { Context, RequestData, splitUrl } from "./context";
+import { Context, RequestData, splitUrl, validRequestId } from "./context";
 import type { ControllerDef } from "./controller";
 import { Lifecycle, type ShutdownHook } from "./lifecycle";
 import { compose, type Middleware } from "./middleware";
@@ -39,6 +40,19 @@ export type AppOptions = {
   authenticate?: Authenticate;
   /** Default locale of framework messages ("en"); a supported `Accept-Language` overrides it per request. */
   locale?: string;
+  /**
+   * Built-in `GET /health` (liveness: 200 while the process runs) and `GET /ready` (readiness: 503 once shutdown
+   * started or when the database does not answer `select 1` in time). On by default; a route of your own on
+   * either path wins. `false` turns both off.
+   */
+  health?: boolean;
+  /** How long `/ready` waits for the database, in ms (default 1000). */
+  readyTimeout?: number;
+  /**
+   * Request ids (default true): a valid incoming `x-request-id` is reused, otherwise one is generated; it is on
+   * `ctx.requestId`, in every `ctx.log` line and echoed as the `x-request-id` response header.
+   */
+  requestId?: boolean;
 };
 
 /** One registered route. */
@@ -80,6 +94,9 @@ export class App {
   readonly lifecycle = new Lifecycle();
   private readonly shutdownHooks: ShutdownHook[] = [];
   private shutdownPromise: Promise<boolean> | null = null;
+  private readonly health: boolean;
+  private readonly readyTimeout: number;
+  private readonly requestIds: boolean;
 
   constructor(options: AppOptions) {
     this.container = new Container(options.providers ?? []);
@@ -89,6 +106,9 @@ export class App {
     this.exposeErrors = options.exposeErrors ?? false;
     this.authenticate = options.authenticate ?? null;
     this.locale = options.locale ?? "en";
+    this.health = options.health ?? true;
+    this.readyTimeout = options.readyTimeout ?? 1000;
+    this.requestIds = options.requestId ?? true;
     for (const entry of options.controllers) this.register(entry);
   }
 
@@ -172,11 +192,12 @@ export class App {
   /** Handles one request; never throws. */
   async handle(request: RequestData): Promise<Reply> {
     const { path, query } = splitUrl(request.url);
-    const ctx = new Context(request, path, this.container);
+    const ctx = this.context(request, path);
     ctx.query = query;
     let reply: Reply;
     try {
-      reply = await compose(this.middleware, ctx, () => this.dispatch(ctx));
+      const probe = this.health ? await this.probe(ctx) : null;
+      reply = probe !== null ? probe : await compose(this.middleware, ctx, () => this.dispatch(ctx));
     } catch (error) {
       reply = await this.errorReply(error, ctx);
     }
@@ -202,7 +223,7 @@ export class App {
    */
   async upgrade(request: RequestData): Promise<Upgrade> {
     const { path, query } = splitUrl(request.url);
-    const ctx = new Context(request, path, this.container);
+    const ctx = this.context(request, path);
     ctx.query = query;
     const match = this.router.find("WS", path);
     const accepted: { handlers: WsHandlers | null } = { handlers: null };
@@ -228,6 +249,37 @@ export class App {
     for (const key of Object.keys(ctx.responseHeaders)) headers[key] = ctx.responseHeaders[key]!;
     for (const key of Object.keys(reply.headers)) headers[key] = reply.headers[key]!;
     return new Upgrade(null, ctx, new Reply(reply.status, reply.body, headers, [...reply.cookies, ...ctx.responseCookies]));
+  }
+
+  private context(request: RequestData, path: string): Context {
+    const ctx = new Context(request, path, this.container);
+    ctx.logger = this.logger;
+    if (this.requestIds) {
+      const incoming = request.headers["x-request-id"];
+      ctx.requestId = incoming !== undefined && validRequestId(incoming) ? incoming : randomBytes(16).toString("hex");
+      ctx.setHeader("x-request-id", ctx.requestId);
+    }
+    return ctx;
+  }
+
+  /** `/health` and `/ready`, answered before middleware (so probes skip auth and request logs), unless a route claims the path. */
+  private async probe(ctx: Context): Promise<Reply | null> {
+    const path = ctx.path;
+    if (path !== "/health" && path !== "/ready") return null;
+    if (ctx.method !== "GET" && ctx.method !== "HEAD") return null;
+    if (this.router.find("GET", path) !== null) return null;
+    ctx.setHeader("cache-control", "no-store");
+    if (path === "/health") return json({ status: "ok" });
+    if (this.shuttingDown) return json({ status: "shutting_down" }, 503);
+    if (this.container.has(Database)) {
+      const up = await pingDatabase(this.container.get(Database), this.readyTimeout);
+      if (!up) {
+        ctx.log.warn("Readiness check failed: database did not answer", { timeout_ms: this.readyTimeout });
+        return json({ status: "unavailable", checks: { database: "down" } }, 503);
+      }
+      return json({ status: "ready", checks: { database: "up" } });
+    }
+    return json({ status: "ready" });
   }
 
   private async dispatch(ctx: Context): Promise<Reply> {
@@ -298,16 +350,54 @@ export class App {
       return errorBody(error.status, error.code, translate("validation_failed", error.params, locale, error.message), translateIssues(error.issues, locale));
     }
     if (error instanceof HttpError) {
-      if (error.status >= 500) this.logger.error(error.message, { method: ctx.method, path: ctx.path });
+      if (error.status >= 500) this.logger.error(error.message, errorFields(ctx, error.status, ""));
       const message = error.translatable ? translate(error.params["key"] ?? error.code, error.params, locale, error.message) : error.message;
       return errorBody(error.status, error.code, message, error.details);
     }
     if (error instanceof DomainError) return errorBody(422, error.code, error.message, null);
     const message = error instanceof Error ? error.message : String(error);
     const stack = error instanceof Error ? (error.stack ?? "") : "";
-    this.logger.error(`Unhandled error: ${message}`, { method: ctx.method, path: ctx.path, stack });
+    this.logger.error(`Unhandled error: ${message}`, errorFields(ctx, 500, stack));
     return errorBody(500, "internal_error", this.exposeErrors ? message : translate("internal_error", {}, locale, "Internal server error"), this.exposeErrors ? stack : null);
   }
+}
+
+/** The fields of an error log line: request_id, method, path, status, duration_ms (and the stack, if any). */
+function errorFields(ctx: Context, status: number, stack: string): Record<string, unknown> {
+  const fields: Record<string, unknown> = {};
+  if (ctx.requestId !== "") fields["request_id"] = ctx.requestId;
+  fields["method"] = ctx.method;
+  fields["path"] = ctx.path;
+  fields["status"] = status;
+  fields["duration_ms"] = Date.now() - ctx.startedAt;
+  if (stack !== "") fields["stack"] = stack;
+  return fields;
+}
+
+/** Resolves true if the database answers `select 1` within `timeout` ms, false on error or timeout. */
+function pingDatabase(db: Database, timeout: number): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      resolve(false);
+    }, timeout);
+    db.query("select 1", []).then(
+      () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(true);
+      },
+      () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(false);
+      },
+    );
+  });
 }
 
 /** `email_address` → `emailAddress` (models expose camelCase fields). */

@@ -1,0 +1,37 @@
+{
+  "name": "@qala/jobs",
+  "version": "0.0.0",
+  "type": "module",
+  "license": "MIT",
+  "description": "PostgreSQL-backed job queue for Qala: typed jobs, transactional enqueue, SKIP LOCKED workers, retries with backoff, graceful shutdown",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src",
+    "LICENSE"
+  ],
+  "dependencies": {
+    "@qala/core": "workspace:^"
+  },
+  "keywords": [
+    "qala",
+    "typescript",
+    "backend",
+    "scriptc",
+    "native",
+    "jobs",
+    "queue",
+    "postgresql"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Prestgg1/qala.git",
+    "directory": "packages/jobs"
+  },
+  "homepage": "https://prestgg1.github.io/qala/guide/jobs",
+  "bugs": "https://github.com/Prestgg1/qala/issues",
+  "publishConfig": {
+    "access": "public"
+  }
+}

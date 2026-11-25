@@ -1,0 +1,38 @@
+{
+  "name": "@qala/session",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "description": "Server-side sessions in PostgreSQL and CSRF protection for Qala, written for scriptc's static subset",
+  "exports": {
+    ".": "./src/index.ts",
+    "./migrations/0001_qala_sessions.sql": "./migrations/0001_qala_sessions.sql"
+  },
+  "files": [
+    "src",
+    "migrations",
+    "LICENSE"
+  ],
+  "peerDependencies": {
+    "@qala/core": "workspace:*"
+  },
+  "keywords": [
+    "qala",
+    "typescript",
+    "backend",
+    "scriptc",
+    "native",
+    "session",
+    "csrf"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Prestgg1/qala.git",
+    "directory": "packages/session"
+  },
+  "homepage": "https://prestgg1.github.io/qala/guide/sessions",
+  "bugs": "https://github.com/Prestgg1/qala/issues",
+  "publishConfig": {
+    "access": "public"
+  }
+}

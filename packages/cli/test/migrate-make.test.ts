@@ -102,6 +102,7 @@ describe("migrate:make against a live database", () => {
     expect(plan.notes).toEqual(['t_mm_cards.legacy is not in the model; to remove it:\n--   alter table "t_mm_cards" drop column "legacy";']);
     const text = renderMigration("0002_cards", plan);
     expect(text).toContain('--   alter table "t_mm_cards" drop column "legacy";');
+    expect(text.endsWith("-- migrate:down\n-- SQL that undoes the statements above (run by qala migrate:rollback).\n")).toBe(true);
     for (const s of plan.statements) await db.execute(s);
     expect(diffSchema([tableSpec(Board), tableSpec(Card), tableSpec(Counter)], only(await readSnapshot(db), "t_mm_")).statements).toEqual([]);
   });

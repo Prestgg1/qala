@@ -7,3 +7,6 @@ create table comments (
 );
 
 create index comments_task on comments (task_id, created_at);
+
+-- migrate:down
+drop table comments;

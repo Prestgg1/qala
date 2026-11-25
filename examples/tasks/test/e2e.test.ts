@@ -140,6 +140,22 @@ describe(`tasks API (${ON_BUN ? "bun" : "native binary"})`, () => {
     expect((await failure(api.comments.destroy({ params: { id: comment.id } }))).status).toBe(404);
   });
 
+  test("request ids are echoed, or generated when missing or invalid", async () => {
+    const echoed = await fetch(`${BASE}/tasks`, { headers: { "x-request-id": "e2e-req-1" } });
+    expect(echoed.headers.get("x-request-id")).toBe("e2e-req-1");
+    const generated = await fetch(`${BASE}/nope`, { headers: { "x-request-id": "x".repeat(129) } });
+    expect(generated.status).toBe(404);
+    expect(generated.headers.get("x-request-id")).toMatch(/^[0-9a-f]{32}$/);
+  });
+
+  test("/health and /ready", async () => {
+    const health = await fetch(`${BASE}/health`);
+    expect([health.status, await health.json()]).toEqual([200, { status: "ok" }]);
+    expect(health.headers.get("x-request-id")).toMatch(/^[0-9a-f]{32}$/);
+    const ready = await fetch(`${BASE}/ready`);
+    expect([ready.status, await ready.json()]).toEqual([200, { status: "ready", checks: { database: "up" } }]);
+  });
+
   test("unknown routes and methods", async () => {
     expect((await fetch(`${BASE}/nope`)).status).toBe(404);
     expect((await fetch(`${BASE}/tasks`, { method: "PUT", headers: { authorization: `Bearer ${TOKEN}` } })).status).toBe(405);
