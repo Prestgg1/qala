@@ -51,6 +51,7 @@ export default defineConfig({
         items: [
           { text: "Dependency injection", link: "/guide/dependency-injection" },
           { text: "Authentication", link: "/guide/auth" },
+          { text: "Sessions and CSRF", link: "/guide/sessions" },
           { text: "Errors", link: "/guide/errors" },
           { text: "Events", link: "/guide/events" },
           { text: "Config", link: "/guide/config" },
