@@ -30,7 +30,7 @@
     },
     "packages/cli": {
       "name": "@qala/cli",
-      "version": "0.1.0",
+      "version": "1.0.0",
       "bin": {
         "qala": "./src/bin.ts",
       },
@@ -43,15 +43,15 @@
     },
     "packages/client": {
       "name": "@qala/client",
-      "version": "0.1.0",
+      "version": "1.0.0",
     },
     "packages/core": {
       "name": "@qala/core",
-      "version": "0.1.0",
+      "version": "1.0.0",
     },
     "packages/crdt": {
       "name": "@qala/crdt",
-      "version": "0.1.0",
+      "version": "1.0.0",
       "devDependencies": {
         "lib0": "0.2.119",
         "y-protocols": "1.0.7",
@@ -60,21 +60,21 @@
     },
     "packages/jobs": {
       "name": "@qala/jobs",
-      "version": "0.0.0",
+      "version": "0.1.0",
       "dependencies": {
         "@qala/core": "workspace:^",
       },
     },
     "packages/openapi": {
       "name": "@qala/openapi",
-      "version": "0.1.0",
+      "version": "1.0.0",
       "dependencies": {
         "@qala/core": "workspace:*",
       },
     },
     "packages/session": {
       "name": "@qala/session",
-      "version": "0.1.0",
+      "version": "1.0.0",
       "peerDependencies": {
         "@qala/core": "workspace:*",
       },

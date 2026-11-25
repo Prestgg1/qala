@@ -1,6 +1,6 @@
 {
   "name": "@qala/openapi",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
   "license": "MIT",
   "description": "OpenAPI 3.1 documents generated from a Qala app's routes, input schemas and resource models",

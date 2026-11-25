@@ -1,6 +1,6 @@
 {
   "name": "@qala/jobs",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
   "license": "MIT",
   "description": "PostgreSQL-backed job queue for Qala: typed jobs, transactional enqueue, SKIP LOCKED workers, retries with backoff, graceful shutdown",

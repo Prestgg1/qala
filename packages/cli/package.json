@@ -1,6 +1,6 @@
 {
   "name": "@qala/cli",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "The Qala builder: route generation, Clean Architecture checks, scaffolding and native builds with scriptc",
   "type": "module",
   "license": "MIT",

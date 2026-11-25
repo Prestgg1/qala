@@ -1,6 +1,6 @@
 {
   "name": "@qala/session",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
   "license": "MIT",
   "description": "Server-side sessions in PostgreSQL and CSRF protection for Qala, written for scriptc's static subset",
