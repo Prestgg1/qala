@@ -320,6 +320,7 @@ Why it is fast: `qala generate` writes a typed row decoder for every model (`.qa
 | [`@qala/core`](packages/core) | runtime: HTTP, routing, validation, DI, errors, middleware, config, PostgreSQL, models, migrations |
 | [`@qala/client`](packages/client) | typed frontend client |
 | [`@qala/cli`](packages/cli) | the builder: code generation, architecture check, scaffolding, native builds |
+| [`@qala/openapi`](packages/openapi) | OpenAPI 3.1 documents from the app (`qala openapi`, optional `GET /openapi.json`) |
 
 ## Status
 

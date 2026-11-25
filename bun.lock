@@ -34,6 +34,9 @@
       "bin": {
         "qala": "./src/bin.ts",
       },
+      "dependencies": {
+        "@qala/openapi": "workspace:*",
+      },
       "peerDependencies": {
         "typescript": ">=5.4",
       },
@@ -53,6 +56,13 @@
         "lib0": "0.2.119",
         "y-protocols": "1.0.7",
         "yjs": "13.6.33",
+      },
+    },
+    "packages/openapi": {
+      "name": "@qala/openapi",
+      "version": "0.1.0",
+      "dependencies": {
+        "@qala/core": "workspace:*",
       },
     },
   },
@@ -221,6 +231,8 @@
     "@qala/core": ["@qala/core@workspace:packages/core"],
 
     "@qala/crdt": ["@qala/crdt@workspace:packages/crdt"],
+
+    "@qala/openapi": ["@qala/openapi@workspace:packages/openapi"],
 
     "@rollup/rollup-android-arm-eabi": ["@rollup/rollup-android-arm-eabi@4.68.3", "", { "os": "android", "cpu": "arm" }, "sha512-mqfypgH/liYjaSCoPI4erckUcROgZtmFUUmyOJ05oyayi/tVqOEYAzWP7ufqCoCT3xB31Fw4XIVO/jX42hYvKA=="],
 

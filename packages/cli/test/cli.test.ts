@@ -372,3 +372,25 @@ describe("app.gen.ts and make:test", () => {
     expect(readFileSync(join(root, "test/notes.test.ts"), "utf8")).not.toContain("client.notes.index({});\n    expect(Array");
   });
 });
+
+describe("openapi opt-in", () => {
+  test("main.ts serves /openapi.json only when package.json asks for it", async () => {
+    const { renderMain, renderAppOptions, renderOpenApiModule } = await import("../src/codegen");
+    const { mkdtempSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const root = mkdtempSync(join(tmpdir(), "qala-openapi-"));
+    writeFileSync(join(root, "package.json"), JSON.stringify({ name: "x" }));
+    expect(renderMain(root)).not.toContain("openapi");
+    writeFileSync(join(root, "package.json"), JSON.stringify({ name: "x", qala: { openapi: true } }));
+    expect(renderMain(root)).not.toContain("openapi");
+    writeFileSync(join(root, "package.json"), JSON.stringify({ name: "x", qala: { openapi: { serve: true } } }));
+    const main = renderMain(root);
+    expect(main).toContain('import { QalaOpenapiController } from "./openapi.gen";');
+    expect(main).toContain('controllers: [...controllers, { name: "qalaOpenapi", prefix: "/openapi.json", controller: QalaOpenapiController }],');
+    expect(renderAppOptions(root)).toContain("QalaOpenapiController");
+    const mod = renderOpenApiModule('{"openapi":"3.1.0"}');
+    expect(mod).toContain('export const openapiJson: string = "{\\"openapi\\":\\"3.1.0\\"}";');
+    expect(mod).toContain("new Reply(200, openapiJson");
+  });
+});

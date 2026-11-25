@@ -55,6 +55,7 @@ export default defineConfig({
           { text: "Events", link: "/guide/events" },
           { text: "Config", link: "/guide/config" },
           { text: "Testing", link: "/guide/testing" },
+          { text: "OpenAPI", link: "/guide/openapi" },
         ],
       },
       {

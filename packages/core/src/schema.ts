@@ -57,8 +57,34 @@ function sqlLiteral(value: string | number | boolean | null): string {
   return `'${value.replace(/'/g, "''")}'`;
 }
 
+/**
+ * The declared rules of a schema (lengths, bounds, allowed values, array item), kept for documentation
+ * (`@qala/openapi`); validation itself runs through `check`.
+ */
+export class SchemaRules {
+  constructor(
+    readonly hasMin: boolean,
+    readonly min: number,
+    readonly hasMax: boolean,
+    readonly max: number,
+    /** Regular expression source of `pattern` ("" when none). */
+    readonly pattern: string,
+    /** Allowed values of `enum`/`literal`, as text, and their types ("string", "number", "boolean"). */
+    readonly values: string[],
+    readonly valueTypes: string[],
+    /** Item schema of an array. */
+    readonly item: SchemaNode | null,
+  ) {}
+}
+
+export const NO_RULES = new SchemaRules(false, 0, false, 0, "", [], [], null);
+
+function bounds(min: number | undefined, max: number | undefined, pattern: string): SchemaRules {
+  return new SchemaRules(min !== undefined, min ?? 0, max !== undefined, max ?? 0, pattern, [], [], null);
+}
+
 function withColumn(node: SchemaNode, meta: ColumnMeta): SchemaNode {
-  return new SchemaNode(node.kind, node.check, node.optional, node.keys, node.fields, meta);
+  return new SchemaNode(node.kind, node.check, node.optional, node.keys, node.fields, meta, node.rules);
 }
 
 function meta(c: ColumnMeta, change: { isPrimary?: boolean; defaultExpr?: string; isUnique?: boolean; isIndexed?: boolean; refTable?: string; refColumn?: string; refSelf?: boolean; onDelete?: string; sqlType?: string; isNullable?: boolean }): ColumnMeta {
@@ -86,6 +112,8 @@ export class SchemaNode {
     readonly fields: SchemaNode[],
     /** Database column metadata when the schema is a model field. */
     readonly column: ColumnMeta = NO_COLUMN,
+    /** Declared rules, for documentation only. */
+    readonly rules: SchemaRules = NO_RULES,
   ) {}
 
   // Column modifiers (for model fields). They return `this` so the validated type is kept.
@@ -128,7 +156,7 @@ export class SchemaNode {
   /** The value may be `null` (a nullable column). Call it before `.default(...)`. */
   nullable(): Schema<Infer<this> | null> {
     const inner: SchemaNode = this;
-    return new SchemaNode(inner.kind, (input, path, issues, coerce) => (input === null ? null : inner.check(input, path, issues, coerce)), inner.optional, inner.keys, inner.fields, meta(inner.column, { isNullable: true }));
+    return new SchemaNode(inner.kind, (input, path, issues, coerce) => (input === null ? null : inner.check(input, path, issues, coerce)), inner.optional, inner.keys, inner.fields, meta(inner.column, { isNullable: true }), inner.rules);
   }
 }
 
@@ -146,8 +174,8 @@ type Simplify<T> = { [K in keyof T]: T[K] } & {};
 /** The object type of a shape: fields whose schema accepts `undefined` become optional. */
 export type InferShape<S extends Shape> = Simplify<{ [K in RequiredKeys<S>]: Infer<S[K]> } & { [K in OptionalKeys<S>]?: Infer<S[K]> }>;
 
-function node(kind: string, check: Check, optional = false): SchemaNode {
-  return new SchemaNode(kind, check, optional, [], []);
+function node(kind: string, check: Check, rules: SchemaRules = NO_RULES): SchemaNode {
+  return new SchemaNode(kind, check, false, [], [], NO_COLUMN, rules);
 }
 
 function describe(value: unknown): string {
@@ -196,7 +224,7 @@ function numberCheck(integer: boolean, rules: NumberRules): Check {
 /** Schema builders (use the `t` instance). */
 export class SchemaBuilder {
   string(rules: StringRules = {}): Schema<string> {
-    return node("string", stringCheck("string", rules, null, "string"));
+    return node("string", stringCheck("string", rules, null, "string"), bounds(rules.min, rules.max, rules.pattern === undefined ? "" : rules.pattern.source));
   }
   uuid(): Schema<string> {
     return node("uuid", stringCheck("uuid", {}, (s) => UUID.test(s), "a UUID"));
@@ -209,10 +237,10 @@ export class SchemaBuilder {
     return node("datetime", stringCheck("datetime", {}, (s) => ISO_DATE.test(s) && !Number.isNaN(Date.parse(s)), "an ISO date"));
   }
   number(rules: NumberRules = {}): Schema<number> {
-    return node("number", numberCheck(false, rules));
+    return node("number", numberCheck(false, rules), bounds(rules.min, rules.max, ""));
   }
   integer(rules: NumberRules = {}): Schema<number> {
-    return node("integer", numberCheck(true, rules));
+    return node("integer", numberCheck(true, rules), bounds(rules.min, rules.max, ""));
   }
   boolean(): Schema<boolean> {
     return node("boolean", (input, path, issues, coerce) => {
@@ -225,7 +253,13 @@ export class SchemaBuilder {
   /** One of the given literal values (strings, numbers or booleans): `t.literal([0, 1, 2, 3])`. */
   literal<const V extends readonly (string | number | boolean)[]>(values: V): Schema<V[number]> {
     const allowed: (string | number | boolean)[] = [];
-    for (const v of values) allowed.push(v);
+    const texts: string[] = [];
+    const types: string[] = [];
+    for (const v of values) {
+      allowed.push(v);
+      texts.push(String(v));
+      types.push(typeof v);
+    }
     return node("literal", (input, path, issues, coerce) => {
       for (const v of allowed) {
         if (input === v) return v;
@@ -233,16 +267,20 @@ export class SchemaBuilder {
       }
       issues.push({ path, message: `must be one of: ${allowed.map((v) => String(v)).join(", ")}`, code: "one_of", params: { values: allowed.map((v) => String(v)).join(", ") } });
       return input;
-    });
+    }, new SchemaRules(false, 0, false, 0, "", texts, types, null));
   }
   /** One of the given string literals. */
   enum<const V extends readonly string[]>(values: V): Schema<V[number]> {
     const allowed: string[] = [];
-    for (const v of values) allowed.push(v);
+    const types: string[] = [];
+    for (const v of values) {
+      allowed.push(v);
+      types.push("string");
+    }
     return node("enum", (input, path, issues) => {
       if (typeof input !== "string" || !allowed.includes(input)) issues.push({ path, message: `must be one of: ${allowed.join(", ")}`, code: "one_of", params: { values: allowed.join(", ") } });
       return input;
-    });
+    }, new SchemaRules(false, 0, false, 0, "", allowed, types, null));
   }
   array<S extends SchemaNode>(item: S, rules: { min?: number; max?: number } = {}): Schema<Infer<S>[]> {
     return node("array", (input, path, issues, coerce) => {
@@ -255,7 +293,7 @@ export class SchemaBuilder {
       const out: unknown[] = [];
       for (let i = 0; i < input.length; i++) out.push(item.check(input[i], `${path}[${i}]`, issues, coerce));
       return out;
-    });
+    }, new SchemaRules(rules.min !== undefined, rules.min ?? 0, rules.max !== undefined, rules.max ?? 0, "", [], [], item));
   }
   object<S extends Shape>(shape: S): Schema<InferShape<S>> {
     const keys = Object.keys(shape);
@@ -285,11 +323,11 @@ export class SchemaBuilder {
   }
   /** The value may be missing (`undefined`). */
   optional<S extends SchemaNode>(inner: S): Schema<Infer<S> | undefined> {
-    return new SchemaNode(inner.kind, (input, path, issues, coerce) => (input === undefined ? undefined : inner.check(input, path, issues, coerce)), true, inner.keys, inner.fields, inner.column);
+    return new SchemaNode(inner.kind, (input, path, issues, coerce) => (input === undefined ? undefined : inner.check(input, path, issues, coerce)), true, inner.keys, inner.fields, inner.column, inner.rules);
   }
   /** The value may be `null`. */
   nullable<S extends SchemaNode>(inner: S): Schema<Infer<S> | null> {
-    return new SchemaNode(inner.kind, (input, path, issues, coerce) => (input === null ? null : inner.check(input, path, issues, coerce)), inner.optional, inner.keys, inner.fields, meta(inner.column, { isNullable: true }));
+    return new SchemaNode(inner.kind, (input, path, issues, coerce) => (input === null ? null : inner.check(input, path, issues, coerce)), inner.optional, inner.keys, inner.fields, meta(inner.column, { isNullable: true }), inner.rules);
   }
   /** Anything (no validation). */
   unknown(): Schema<unknown> {

@@ -1,9 +1,9 @@
-export { t, validate, SchemaNode, type Schema, type Infer, type InferShape, type Shape, type Issue, type Check } from "./schema";
+export { t, validate, SchemaNode, SchemaRules, NO_RULES, type Schema, type Infer, type InferShape, type Shape, type Issue, type Check } from "./schema";
 export { HttpError, BadRequestError, UnauthorizedError, ForbiddenError, NotFoundError, ConflictError, ValidationError, TooManyRequestsError, DomainError } from "./errors";
 export { Reply, json, created, noContent, text, redirect, type TypedReply } from "./http/reply";
 export { Context, RequestData } from "./http/context";
 export { action, get, post, put, patch, del, toReply, ActionDef, type Action, type Input, type ResultOf, type InputSchemas } from "./http/action";
-export { controller, ControllerDef, type Controller, type ControllerOptions } from "./http/controller";
+export { controller, ControllerDef, ResourceMeta, type Controller, type ControllerOptions } from "./http/controller";
 export { compose, type Middleware } from "./http/middleware";
 export { App, Route, createApp, type AppOptions, type ControllerEntry, type ErrorHandler } from "./http/app";
 export { serve, serverLimits, ServerLimits, type ServeOptions } from "./http/server";

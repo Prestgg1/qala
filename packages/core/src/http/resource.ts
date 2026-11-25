@@ -3,7 +3,7 @@ import type { Model, ModelDef } from "../db/model";
 import { ValidationError } from "../errors";
 import { t, type Issue, type SchemaNode, type Shape } from "../schema";
 import { ActionDef, toReply, type Action, type RuntimeInput } from "./action";
-import { ControllerDef, type Controller } from "./controller";
+import { ControllerDef, ResourceMeta, type Controller } from "./controller";
 import { Reply } from "./reply";
 import { authorize, type Policy } from "./policy";
 
@@ -220,6 +220,9 @@ export function resource<Row, Key extends string, Create, Update, const O extend
   };
   const controller = new ControllerDef(["db"], [Database], build, [], opts.auth === true);
   controller.resourceName = opts.name ?? resourceName(def.table);
+  const filters: string[] = [];
+  for (const key of opts.filters ?? []) filters.push(key);
+  controller.resource = new ResourceMeta(def, filters, policy !== null, pageSize, maxPageSize);
   return controller as Controller<ResourceActions<Row, Create, Update, O> & X>;
 }
 

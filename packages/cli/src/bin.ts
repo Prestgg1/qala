@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
+import { resolve } from "node:path";
 import { checkArchitecture } from "./check";
-import { generate } from "./codegen";
+import { generate, writeOpenApi } from "./codegen";
 import { doctorCommand } from "./doctor";
 import { fixApp } from "./fix";
 import type { SkippedModel } from "./models";
@@ -19,6 +20,8 @@ ${color.bold("Usage")}  qala <command> [options]
 ${color.bold("Develop")}
   dev                         generate routes, run with Bun, reload on changes
   generate                    write .qala/routes.gen.ts, api.ts, models.gen.ts, main.ts
+  openapi [--out openapi.json] [--yaml]
+                              generate, then write the app's OpenAPI 3.1 document
   routes                      list every route (METHOD PATH controller.action)
   check [--fix]               enforce the Clean Architecture dependency rule; --fix rewrites scriptc pitfalls first
   migrate                     apply database/migrations/*.sql
@@ -125,6 +128,15 @@ export async function main(argv: string[]): Promise<number> {
       if (providers > 0) console.log(`${color.green("✓")} ${providers} injected provider${providers === 1 ? "" : "s"}`);
       for (const w of diWarnings) console.log(`${color.yellow("note")} ${w}`);
       printRoutes(root);
+      return 0;
+    }
+    case "openapi": {
+      const root = findRoot();
+      generate(root);
+      const yaml = args.flags.get("yaml") === true;
+      const out = flag(args, "out") ?? (yaml ? "openapi.yaml" : "openapi.json");
+      writeOpenApi(root, resolve(root, out), yaml);
+      console.log(`${color.green("wrote")} ${out}`);
       return 0;
     }
     case "doctor":

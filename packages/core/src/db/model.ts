@@ -209,7 +209,7 @@ export function model<const S extends Shape, const P extends string = never>(
     const f = fields[i]!;
     const c = f.column;
     if (!c.refSelf) continue;
-    fields[i] = new SchemaNode(f.kind, f.check, f.optional, f.keys, f.fields, new ColumnMeta(c.isPrimary, c.defaultExpr, c.isUnique, c.isIndexed, table, pkColumn, false, c.onDelete, c.sqlType, c.isNullable));
+    fields[i] = new SchemaNode(f.kind, f.check, f.optional, f.keys, f.fields, new ColumnMeta(c.isPrimary, c.defaultExpr, c.isUnique, c.isIndexed, table, pkColumn, false, c.onDelete, c.sqlType, c.isNullable), f.rules);
   }
   const realtime = options.realtime === undefined ? null : (options.realtime as unknown as (row: unknown) => unknown);
   return new ModelDef(table, keys, columns, kinds, fields, primaryKey, options.audit ?? false, realtime, options.events ?? false) as Model<InferShape<S>, Extract<keyof S, string>, CreateOf<S>, UpdateOf<S, P>>;
