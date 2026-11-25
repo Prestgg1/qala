@@ -150,7 +150,7 @@ database/migrations/ 0001_create_tasks.sql, ...
 | layer | may import |
 |---|---|
 | `domain` | domain, `@qala/core` |
-| `application` | application, domain, `@qala/core` |
+| `application` | application, domain, `@qala/core`, `@qala/jobs` |
 | `infrastructure` | infrastructure, application, domain, any package |
 | `http` | http, application, domain, `@qala/core` — never infrastructure |
 | `providers.ts`, `kernel.ts`, `config` | anything (composition roots) |
@@ -319,6 +319,7 @@ Why it is fast: `qala generate` writes a typed row decoder for every model (`.qa
 |---|---|
 | [`@qala/core`](packages/core) | runtime: HTTP, routing, validation, DI, errors, middleware, config, PostgreSQL, models, migrations |
 | [`@qala/client`](packages/client) | typed frontend client |
+| [`@qala/jobs`](packages/jobs) | PostgreSQL job queue: typed jobs, transactional enqueue, `SKIP LOCKED` workers, retries, graceful shutdown ([guide](docs/guide/jobs.md)) |
 | [`@qala/cli`](packages/cli) | the builder: code generation, architecture check, scaffolding, native builds |
 
 ## Status

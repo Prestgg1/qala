@@ -4,7 +4,7 @@ import { generate } from "./codegen";
 import { doctorCommand } from "./doctor";
 import { fixApp } from "./fix";
 import type { SkippedModel } from "./models";
-import { makeController, makeMiddleware, makeMigration, makeModel, makeRepository, makeService, makeTest, type MakeResult } from "./make";
+import { makeController, makeJob, makeJobsTable, makeMiddleware, makeMigration, makeModel, makeRepository, makeService, makeTest, type MakeResult } from "./make";
 import { pullCommand } from "./pull";
 import { build, dev, migrateCommand, start } from "./run";
 import { migrateMakeCommand } from "./migrate-make";
@@ -39,6 +39,9 @@ ${color.bold("Scaffold")}
   make:service <name>         application service, registered in providers
   make:middleware <name>
   make:migration <name>
+  make:job <name>             background job (@qala/jobs) in app/application/jobs
+  make:jobs-table [--table qala_jobs]
+                              migration that creates the @qala/jobs table
   (make:* accept --force to overwrite)
 
   doctor                      check Bun, Node.js, scriptc, clang, project files and database
@@ -186,6 +189,12 @@ export async function main(argv: string[]): Promise<number> {
       return 0;
     case "make:test":
       printMake(makeTest(findRoot(), needName("tasks"), force));
+      return 0;
+    case "make:job":
+      printMake(makeJob(findRoot(), needName("send-welcome"), force));
+      return 0;
+    case "make:jobs-table":
+      printMake(makeJobsTable(findRoot(), flag(args, "table") ?? "qala_jobs"));
       return 0;
     case "make:migration":
       printMake(makeMigration(findRoot(), needName("create_tasks")));

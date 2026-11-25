@@ -53,6 +53,7 @@ export default defineConfig({
           { text: "Authentication", link: "/guide/auth" },
           { text: "Errors", link: "/guide/errors" },
           { text: "Events", link: "/guide/events" },
+          { text: "Background jobs", link: "/guide/jobs" },
           { text: "Config", link: "/guide/config" },
           { text: "Testing", link: "/guide/testing" },
         ],

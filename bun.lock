@@ -55,6 +55,13 @@
         "yjs": "13.6.33",
       },
     },
+    "packages/jobs": {
+      "name": "@qala/jobs",
+      "version": "0.0.0",
+      "dependencies": {
+        "@qala/core": "workspace:^",
+      },
+    },
   },
   "trustedDependencies": [
     "scriptc",
@@ -221,6 +228,8 @@
     "@qala/core": ["@qala/core@workspace:packages/core"],
 
     "@qala/crdt": ["@qala/crdt@workspace:packages/crdt"],
+
+    "@qala/jobs": ["@qala/jobs@workspace:packages/jobs"],
 
     "@rollup/rollup-android-arm-eabi": ["@rollup/rollup-android-arm-eabi@4.68.3", "", { "os": "android", "cpu": "arm" }, "sha512-mqfypgH/liYjaSCoPI4erckUcROgZtmFUUmyOJ05oyayi/tVqOEYAzWP7ufqCoCT3xB31Fw4XIVO/jX42hYvKA=="],
 

@@ -297,7 +297,8 @@ ${calls}
   return { created: [file], notes: ["run it with: bun test (needs qala generate once, which dev and build also run)"] };
 }
 
-export function makeMigration(root: string, name: string): MakeResult {
+/** `database/migrations/NNNN_<slug>.sql` with the next free number. */
+function nextMigration(root: string, slug: string): string {
   const dir = join(root, LAYOUT.migrations);
   let next = 1;
   if (existsSync(dir)) {
@@ -306,9 +307,13 @@ export function makeMigration(root: string, name: string): MakeResult {
       if (m !== null) next = Math.max(next, Number(m[1]) + 1);
     }
   }
+  return `${LAYOUT.migrations}/${String(next).padStart(4, "0")}_${slug}.sql`;
+}
+
+export function makeMigration(root: string, name: string): MakeResult {
   const slug = snake(name);
   if (slug === "") throw new CliError("make:migration needs a name, e.g. qala make:migration create_tasks");
-  const file = `${LAYOUT.migrations}/${String(next).padStart(4, "0")}_${slug}.sql`;
+  const file = nextMigration(root, slug);
   const table = /^create_(.+)$/.exec(slug)?.[1];
   const body =
     table !== undefined
@@ -321,4 +326,88 @@ export function makeMigration(root: string, name: string): MakeResult {
       : "-- Write your migration here. Each file runs once, in order, inside a transaction.\n";
   createFile(root, file, body);
   return { created: [file], notes: ["apply with: qala migrate"] };
+}
+
+/**
+ * The @qala/jobs table (same SQL as `jobsTableSql()` in packages/jobs/src/table.ts; a test keeps them equal).
+ * Written as a migration by `qala make:jobs-table`.
+ */
+export function jobsTableSql(table: string = "qala_jobs"): string {
+  return `create table ${table} (
+  id bigserial primary key,
+  queue text not null default 'default',
+  name text not null,
+  payload jsonb not null default '{}',
+  status text not null default 'pending' check (status in ('pending', 'running', 'completed', 'dead')),
+  attempts integer not null default 0,
+  max_attempts integer not null default 5,
+  run_at timestamptz not null default now(),
+  locked_at timestamptz,
+  locked_by text,
+  last_error text,
+  created_at timestamptz not null default now(),
+  finished_at timestamptz
+);
+
+-- What workers claim: pending jobs of a queue whose time has come.
+create index ${table}_claim on ${table} (queue, run_at, id) where status = 'pending';
+-- Stuck-job recovery scans running jobs by lock age.
+create index ${table}_running on ${table} (locked_at) where status = 'running';
+`;
+}
+
+/** `qala make:jobs-table`: the migration that creates the @qala/jobs table. */
+export function makeJobsTable(root: string, table: string = "qala_jobs"): MakeResult {
+  if (!/^[a-z_][a-z0-9_]*$/.test(table)) throw new CliError(`make:jobs-table: "${table}" is not a plain lower-case table name`);
+  const dir = join(root, LAYOUT.migrations);
+  if (existsSync(dir)) {
+    for (const f of readdirSync(dir)) {
+      if (f.endsWith(`_create_${table}.sql`)) throw new CliError(`${LAYOUT.migrations}/${f} already creates ${table}`);
+    }
+  }
+  const file = nextMigration(root, `create_${table}`);
+  createFile(root, file, jobsTableSql(table));
+  return { created: [file], notes: ["apply with: qala migrate", ...(table === "qala_jobs" ? [] : [`pass { table: "${table}" } to new Jobs(...)`])] };
+}
+
+/** `qala make:job send-welcome`: a job definition in app/application/jobs/. */
+export function makeJob(root: string, name: string, force = false): MakeResult {
+  const slug = kebab(name.replace(/Job$/, ""));
+  if (slug === "") throw new CliError("make:job needs a name, e.g. qala make:job send-welcome");
+  const file = `${LAYOUT.application}/jobs/${slug}.job.ts`;
+  const constName = pascal(slug);
+  createFile(
+    root,
+    file,
+    `import { t } from "@qala/core";
+import { defineJob } from "@qala/jobs";
+
+/**
+ * The "${slug}" job. Enqueue it from a service that injects \`Jobs\` (from @qala/jobs):
+ *
+ *   await this.jobs.enqueue(${constName}, { id }, { delay: 0, maxAttempts: 5 });   // add { tx } inside a transaction
+ *
+ * Payloads travel as JSON: keep the schema JSON-friendly (strings for dates).
+ */
+export const ${constName} = defineJob(
+  "${slug}",
+  t.object({ id: t.string() }),
+  async (payload, job) => {
+    // Services come from the app's container: job.container.get(SomeService).
+    // Throwing retries the job with exponential backoff; after maxAttempts it is marked dead.
+    console.log(\`${slug} \${payload.id} (attempt \${job.attempt}/\${job.maxAttempts})\`);
+  },
+  { maxAttempts: 5 },
+);
+`,
+    force,
+  );
+  const notes = [
+    `register it with the queue in ${LAYOUT.providers}: provide(Jobs, (c) => new Jobs(c.get(Database), [${constName}, ...]))`,
+    `start a worker in ${LAYOUT.kernel}: export function onStart(app: App) { app.container.get(Jobs).start(app); }`,
+  ];
+  const dir = join(root, LAYOUT.migrations);
+  const hasTable = existsSync(dir) && readdirSync(dir).some((f) => f.endsWith("_create_qala_jobs.sql"));
+  if (!hasTable) notes.push("create the jobs table once with: qala make:jobs-table && qala migrate");
+  return { created: [file], notes };
 }
