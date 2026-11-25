@@ -252,36 +252,6 @@ exports[`qala openapi: the tasks API document 1`] = `
         ],
       },
     },
-    "/health": {
-      "get": {
-        "operationId": "health.index",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "description": "Not inferred: the handler's return type is not known at run time.",
-                },
-              },
-            },
-            "description": "OK",
-          },
-          "default": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error",
-                },
-              },
-            },
-            "description": "Any other error, in the standard error envelope",
-          },
-        },
-        "tags": [
-          "health",
-        ],
-      },
-    },
     "/tasks": {
       "get": {
         "operationId": "tasks.index",
@@ -823,9 +793,6 @@ exports[`qala openapi: the tasks API document 1`] = `
   "tags": [
     {
       "name": "comments",
-    },
-    {
-      "name": "health",
     },
     {
       "name": "tasks",
