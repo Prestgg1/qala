@@ -122,14 +122,31 @@ COPY db-ca.pem /app/db-ca.pem
 
 ## Migrations
 
-`qala migrate` runs on Bun, not inside the binary. Run it as a separate step before the new version starts (a CI job, a Kubernetes `Job` or init container, the `migrate` Docker stage). Only one migrator should run at a time.
+`qala migrate` runs on Bun, not inside the binary. Run it as a separate step before the new version starts (a CI job, a Kubernetes `Job` or init container, the `migrate` Docker stage).
+
+It is safe to start it from several places at once: it holds a PostgreSQL advisory lock for the whole run, so a second migrator waits, then finds nothing left to apply. Each migration runs in its own transaction.
+
+On a busy database, bound how long a migration may wait for table locks (instead of queueing every query behind its `alter table`) and how long a statement may run:
+
+```sh
+qala migrate --lock-timeout 5s --statement-timeout 10min
+```
+
+If a release goes wrong, `qala migrate:rollback` (or `--steps N`) runs the `-- migrate:down` sections of the most recent migrations; `qala migrate:status` shows what is applied. See [Migrations](./migrations.md#rolling-back).
+
+## Observability
+
+Request ids (`x-request-id`), JSON request logs and the built-in `/health` and `/ready` probes are described in
+[Observability](/guide/observability). `/ready` answers 503 as soon as shutdown starts, so a load balancer stops sending
+traffic while in-flight requests drain.
 
 ## Production checklist
 
 - [ ] `LOG_FORMAT=json` (if your app reads it) so logs are machine-readable
 - [ ] Secrets come from the environment, never from a committed `.env`
 - [ ] TLS terminates at a reverse proxy; `DATABASE_URL` uses `sslmode=verify-full`
-- [ ] A `/health` route exists and the orchestrator probes it
+- [ ] The orchestrator probes `/health` (liveness) and `/ready` (readiness); see [Observability](/guide/observability)
+- [ ] The proxy forwards or sets `x-request-id`, so logs can be joined across services
 - [ ] Migrations run once, before the rollout
 - [ ] `rateLimit` is per process: with `workers: "auto"` the effective limit is multiplied by the core count
 - [ ] Build and runtime use the same architecture (build arm64 on arm64)

@@ -9,3 +9,6 @@ create table tasks (
 );
 
 create index tasks_created_at on tasks (created_at desc);
+
+-- migrate:down
+drop table tasks;

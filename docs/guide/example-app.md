@@ -34,7 +34,6 @@ bun run bench               # native vs Bun (needs oha and taskset)
 $ qala routes
 POST   /comments            comments.store
 DELETE /comments/:id        comments.destroy
-GET    /health              health.index
 GET    /tasks               tasks.index
 GET    /tasks/:id           tasks.show
 POST   /tasks               tasks.store
@@ -44,7 +43,8 @@ POST   /tasks/:id/complete  tasks.complete
 GET    /tasks/:id/comments  tasks.comments
 ```
 
-Writes need `Authorization: Bearer $API_TOKEN`; reads are public.
+Writes need `Authorization: Bearer $API_TOKEN`; reads are public. `GET /health` and `GET /ready` are built into the
+framework ([Observability](/guide/observability)).
 
 ## Layout
 
@@ -65,7 +65,6 @@ app/
     controllers/
       tasks.controller.ts    → /tasks      (file name = prefix, action name = method + path)
       comments.controller.ts → /comments
-      health.controller.ts   → /health
     middleware/
       write-guard.ts         bearer token for every non-GET request
   providers.ts               composition root: which class serves which contract

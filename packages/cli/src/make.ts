@@ -322,8 +322,11 @@ export function makeMigration(root: string, name: string): MakeResult {
   name text not null,
   created_at timestamptz not null default now()
 );
+
+-- migrate:down
+drop table ${table};
 `
-      : "-- Write your migration here. Each file runs once, in order, inside a transaction.\n";
+      : "-- Write your migration here. Each file runs once, in order, inside a transaction.\n\n-- migrate:down\n-- SQL that undoes it (run by qala migrate:rollback).\n";
   createFile(root, file, body);
   return { created: [file], notes: ["apply with: qala migrate"] };
 }

@@ -5,14 +5,20 @@
 ```ts
 // app/auth.ts
 import type { Context } from "@qala/core";
+import { session } from "@qala/session";
 
 export type AppUser = { id: string; email: string; isAdmin: boolean };
 
 export async function authenticate(ctx: Context): Promise<AppUser | null> {
-  const token = ctx.cookie("session") ?? ctx.bearer();
-  return token === undefined ? null : sessions.userFor(token);
+  const token = ctx.bearer();
+  if (token !== undefined) return apiKeys.userFor(token);
+  const id = session(ctx).userId;            // @qala/session
+  return id === null ? null : users.find(id);
 }
 ```
+
+For cookie sessions use [`@qala/session`](./sessions): sessions in PostgreSQL (hashed tokens, idle and absolute
+expiry, rotation on login, "log out everywhere") and CSRF protection. Don't hand-roll the cookie handling.
 
 `qala generate` wires it into the app and types `user` as `AppUser` everywhere.
 

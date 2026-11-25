@@ -51,6 +51,7 @@ export default defineConfig({
         items: [
           { text: "Dependency injection", link: "/guide/dependency-injection" },
           { text: "Authentication", link: "/guide/auth" },
+          { text: "Sessions and CSRF", link: "/guide/sessions" },
           { text: "Errors", link: "/guide/errors" },
           { text: "Events", link: "/guide/events" },
           { text: "Background jobs", link: "/guide/jobs" },
@@ -63,6 +64,7 @@ export default defineConfig({
         items: [
           { text: "Writing code for scriptc", link: "/guide/native" },
           { text: "Deployment", link: "/guide/deployment" },
+          { text: "Observability", link: "/guide/observability" },
           { text: "qala check", link: "/guide/check" },
         ],
       },
