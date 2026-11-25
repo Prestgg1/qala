@@ -101,7 +101,7 @@ export class App {
       if (method === "") {
         const conventional = RESOURCE[name];
         if (conventional === undefined) {
-          throw new Error(`${entry.name}.${name}: action() is only for index/show/store/update/destroy; use get()/post()/put()/patch()/del() with a path for other routes`);
+          throw new Error(`${entry.name}.${name}: action() is only for index/show/store/update/destroy; use get()/post()/put()/patch()/del() with a path for other routes, e.g. ${name}: post("/${name}", {}, ...) in the ${entry.name} controller (qala generate reports the exact file and line)`);
         }
         method = conventional[0];
         path = conventional[1];
@@ -253,7 +253,7 @@ export class App {
     const def = route.def;
     const input: RuntimeInput = { params: ctx.params, query: ctx.query, body: undefined, files: [], id: ctx.params["id"] ?? "", user: null, ctx };
     if (route.auth !== "") {
-      if (this.authenticate === null) throw new Error(`${route.controller}.${route.action} needs authentication but the app has no authenticate hook (app/auth.ts)`);
+      if (this.authenticate === null) throw new Error(`${route.controller}.${route.action} needs authentication but the app has no authenticate hook. Fix: export async function authenticate(ctx: Context) from app/auth.ts and run qala generate, or drop auth: true from the action`);
       const user = await this.authenticate(ctx);
       if (user === null || user === undefined) {
         if (route.auth === "required") throw new UnauthorizedError();

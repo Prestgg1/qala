@@ -86,7 +86,9 @@ export class Container {
     const provider = this.providers.get(token);
     if (provider === undefined) {
       const name = typeof token === "function" ? (token as { name: string }).name : String(token);
-      throw new Error(`No provider registered for ${name}: add it to app/providers.ts`);
+      throw new Error(
+        `No provider registered for ${name}. Fix: run \`qala generate\` (constructor-injected classes are registered in .qala/providers.gen.ts); for an abstract class, add a class in app/infrastructure that extends ${name}, or bind it in app/providers.ts with singleton<${name}>(${name}, (c) => ...). In tests, pass it to testApp({ providers }).`,
+      );
     }
     if (provider.lifetime === "singleton" && this.instances.has(token)) return this.instances.get(token);
     if (this.resolving.includes(token)) throw new Error(`Circular dependency while resolving ${provider.name}`);

@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { connect } from "node:net";
 import { dirname, join } from "node:path";
 import { appDatabaseUrl } from "./database-url";
+import { doctorJson } from "./diagnostics";
 import { color, findBin, findRoot, LAYOUT } from "./util";
 
 export type CheckStatus = "ok" | "warn" | "fail";
@@ -132,8 +133,13 @@ export async function runDoctor(): Promise<CheckResult[]> {
   return results;
 }
 
-export async function doctorCommand(): Promise<number> {
+export async function doctorCommand(options: { json?: boolean } = {}): Promise<number> {
   const results = await runDoctor();
+  if (options.json === true) {
+    const doc = doctorJson(results);
+    console.log(JSON.stringify(doc, null, 2));
+    return doc.ok ? 0 : 1;
+  }
   const icon = { ok: color.green("✓"), warn: color.yellow("!"), fail: color.red("✗") };
   const width = Math.max(...results.map((r) => r.name.length));
   for (const r of results) {

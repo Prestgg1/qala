@@ -158,7 +158,7 @@ function stringArray(options: ts.ObjectLiteralExpression | null, key: string, fa
     if (!ts.isArrayLiteralExpression(value)) return fail(prop, `resource() option "${key}" must be an array literal of action names`);
     const out: string[] = [];
     for (const el of value.elements) {
-      if (!ts.isStringLiteral(el) || !RESOURCE_ACTIONS.includes(el.text)) return fail(el, `resource() option "${key}" may only list ${RESOURCE_ACTIONS.join(", ")}`);
+      if (!ts.isStringLiteral(el) || !RESOURCE_ACTIONS.includes(el.text)) return fail(el, `resource() option "${key}" lists ${ts.isStringLiteral(el) ? `unknown action "${el.text}"` : "a non-literal"}; it may only list the string literals ${RESOURCE_ACTIONS.join(", ")} (custom actions go in resource()'s third argument)`);
       out.push(el.text);
     }
     return out;

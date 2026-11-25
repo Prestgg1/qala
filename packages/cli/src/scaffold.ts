@@ -1,5 +1,6 @@
 import { existsSync, readdirSync } from "node:fs";
 import { basename, isAbsolute, resolve } from "node:path";
+import { agentsMd, CLAUDE_MD } from "./agents";
 import { CliError, createFile, kebab, rel } from "./util";
 
 export type NewOptions = {
@@ -20,7 +21,7 @@ export function scaffold(dir: string, options: NewOptions = {}): string[] {
         name,
         private: true,
         type: "module",
-        scripts: { dev: "qala dev", build: "qala build", start: "qala start", check: "qala check", routes: "qala routes", migrate: "qala migrate", typecheck: "tsc --noEmit" },
+        scripts: { dev: "qala dev", build: "qala build", start: "qala start", check: "qala check", routes: "qala routes", migrate: "qala migrate", test: "bun test", typecheck: "tsc --noEmit" },
         dependencies: { "@qala/core": "^0.1.0" },
         devDependencies: { "@qala/cli": "^0.1.0", "@types/bun": "^1.3.0", "@types/node": "^24.0.0", scriptc: "0.4.13", typescript: "^5.9.0" },
         trustedDependencies: ["scriptc"],
@@ -104,6 +105,9 @@ export const HealthController = controller({}, () => ({
     "app/application/README.md": "Services / use cases. Constructor parameters are injected automatically (qala generate); no providers file needed.\n",
     "app/infrastructure/README.md": "Implementations of domain contracts: repositories on Database, mail, queues, HTTP clients.\n",
     "database/migrations/README.md": "SQL migrations, applied in order by `qala migrate`. `qala migrate:make <name>` writes one from the difference between your models and the database.\n",
+    // Read by coding agents every session (AGENTS.md by most, CLAUDE.md by Claude Code, which imports it).
+    "AGENTS.md": agentsMd(name),
+    "CLAUDE.md": CLAUDE_MD,
     "README.md": `# ${name}
 
 A [Qala](https://github.com/Prestgg1/qala) app.

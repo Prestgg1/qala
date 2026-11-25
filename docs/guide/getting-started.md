@@ -23,7 +23,7 @@ qala dev                       # Bun, hot reload
 qala build && qala start       # native binary
 ```
 
-Next: [Project layout](./project-layout), then [Controllers](./controllers).
+Next: [Project layout](./project-layout), then [Controllers](./controllers). Working with a coding agent? The new app already has an `AGENTS.md`; see [Using Qala with AI agents](./ai).
 
 ## Testing
 

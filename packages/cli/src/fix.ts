@@ -7,7 +7,8 @@ import { LAYOUT, rel, walk } from "./util";
  * `qala check --fix`: finds the scriptc pitfalls from docs/guide/native.md in app code and rewrites them with
  * minimal text edits (TypeScript compiler API, so formatting and comments around the edit stay as they are).
  */
-export type Fix = { file: string; line: number; message: string };
+/** `code` is a stable diagnostic code (QALA2xx, see docs/guide/check.md); `column` is 1-based. */
+export type Fix = { code: string; file: string; line: number; column: number; message: string };
 export type FixReport = { fixes: Fix[]; unfixable: Fix[]; files: string[] };
 
 type Edit = { start: number; end: number; text: string };
@@ -54,19 +55,20 @@ class Pass {
 
   // ─── bookkeeping ────────────────────────────────────────────────────────────
 
-  private line(sf: ts.SourceFile, pos: number): number {
-    return sf.getLineAndCharacterOfPosition(pos).line + 1;
+  private at(sf: ts.SourceFile, node: ts.Node, code: string, message: string): Fix {
+    const pos = sf.getLineAndCharacterOfPosition(node.getStart(sf));
+    return { code, file: rel(this.root, sf.fileName), line: pos.line + 1, column: pos.character + 1, message };
   }
 
-  private fix(sf: ts.SourceFile, node: ts.Node, message: string, edits: Edit[]): void {
+  private fix(sf: ts.SourceFile, node: ts.Node, code: string, message: string, edits: Edit[]): void {
     const list = this.edits.get(sf.fileName) ?? [];
     list.push(...edits);
     this.edits.set(sf.fileName, list);
-    this.fixes.push({ file: rel(this.root, sf.fileName), line: this.line(sf, node.getStart(sf)), message });
+    this.fixes.push(this.at(sf, node, code, message));
   }
 
-  private skip(sf: ts.SourceFile, node: ts.Node, message: string): void {
-    this.unfixable.push({ file: rel(this.root, sf.fileName), line: this.line(sf, node.getStart(sf)), message });
+  private skip(sf: ts.SourceFile, node: ts.Node, code: string, message: string): void {
+    this.unfixable.push(this.at(sf, node, code, message));
   }
 
   private isAbstractClass(expr: ts.Expression): boolean {
@@ -96,7 +98,7 @@ class Pass {
         else args.push(`${p.dotDotDotToken ? "..." : ""}${p.name.text}`);
       }
       if (!ok) {
-        this.skip(sf, m, `${cls.name.text}.${name}: async method overrides an abstract method; make it non-async by hand (generic or destructured parameters)`);
+        this.skip(sf, m, "QALA201", `${cls.name.text}.${name}: async method overrides an abstract method; make it non-async by hand (generic or destructured parameters)`);
         continue;
       }
       const start = m.getStart(sf);
@@ -106,7 +108,7 @@ class Pass {
       const ret = m.type === undefined ? "" : `: ${m.type.getText(sf)}`;
       const helper = `${name}Async`;
       const wrapper = `${kept.join("")}${name}(${m.parameters.map((p) => p.getText(sf)).join(", ")})${ret} { return this.${helper}(${args.join(", ")}); }\n\n${indent}private async ${helper}`;
-      this.fix(sf, m, `${cls.name.text}.${name}: async override of an abstract method -> non-async, delegating to private async ${helper}`, [{ start, end: m.name.end, text: wrapper }]);
+      this.fix(sf, m, "QALA201", `${cls.name.text}.${name}: async override of an abstract method -> non-async, delegating to private async ${helper}`, [{ start, end: m.name.end, text: wrapper }]);
     }
   }
 
@@ -119,7 +121,7 @@ class Pass {
     const fn = call.arguments[1];
     const callee = call.expression.text;
     if (call.typeArguments === undefined) {
-      this.fix(sf, call, `${callee}(${token.text}, ...): explicit type argument <${token.text}> for an abstract token`, [{ start: call.expression.end, end: call.expression.end, text: `<${token.text}>` }]);
+      this.fix(sf, call, "QALA202", `${callee}(${token.text}, ...): explicit type argument <${token.text}> for an abstract token`, [{ start: call.expression.end, end: call.expression.end, text: `<${token.text}>` }]);
     }
     if (callee === "value" || fn === undefined || !(ts.isArrowFunction(fn) || ts.isFunctionExpression(fn)) || fn.type !== undefined) return;
     const sig = this.checker.getSignatureFromDeclaration(fn);
@@ -131,7 +133,7 @@ class Pass {
       close !== undefined
         ? { start: close.end, end: close.end, text: `: ${token.text}` }
         : { start: fn.parameters[0]!.getStart(sf), end: fn.parameters[0]!.end, text: `(${fn.parameters[0]!.getText(sf)}): ${token.text}` };
-    this.fix(sf, fn, `${callee}(${token.text}, ...): factory returns a union; annotated the return type as ${token.text}`, [edit]);
+    this.fix(sf, fn, "QALA203", `${callee}(${token.text}, ...): factory returns a union; annotated the return type as ${token.text}`, [edit]);
   }
 
   // ─── 4. empty array literals in typed object slots ──────────────────────────
@@ -145,7 +147,7 @@ class Pass {
     if (arrayType === undefined) return;
     const text = this.checker.typeToString(arrayType, undefined, ts.TypeFormatFlags.NoTruncation | ts.TypeFormatFlags.UseAliasDefinedOutsideCurrentScope);
     if (/\b(never|any)\b/.test(text)) return;
-    this.fix(sf, node, `empty array literal for "${node.parent.name.getText(sf)}": added "as ${text}"`, [{ start: node.end, end: node.end, text: ` as ${text}` }]);
+    this.fix(sf, node, "QALA204", `empty array literal for "${node.parent.name.getText(sf)}": added "as ${text}"`, [{ start: node.end, end: node.end, text: ` as ${text}` }]);
   }
 
   // ─── 5. default exports / imports ───────────────────────────────────────────
@@ -162,19 +164,19 @@ class Pass {
       const def = mods.find((m) => m.kind === ts.SyntaxKind.DefaultKeyword);
       if ((ts.isClassDeclaration(st) || ts.isFunctionDeclaration(st)) && def !== undefined) {
         if (st.name === undefined) {
-          this.skip(sf, st, "anonymous default export: give it a name and export it by name");
+          this.skip(sf, st, "QALA205", "anonymous default export: give it a name and export it by name");
           name = null;
           continue;
         }
         name = st.name.text;
         const next = def.end;
         const after = sf.text.slice(next).match(/^\s+/)?.[0].length ?? 0;
-        this.fix(sf, st, `export default ${name} -> export ${name}`, [{ start: def.getStart(sf), end: next + after, text: "" }]);
+        this.fix(sf, st, "QALA205", `export default ${name} -> export ${name}`, [{ start: def.getStart(sf), end: next + after, text: "" }]);
       } else if (ts.isExportAssignment(st) && !st.isExportEquals) {
         if (ts.isIdentifier(st.expression)) {
           name = st.expression.text;
-          this.fix(sf, st, `export default ${name} -> export { ${name} }`, [{ start: st.getStart(sf), end: st.end, text: `export { ${name} };` }]);
-        } else this.skip(sf, st, "default export of an expression: name it (const x = ...; export { x })");
+          this.fix(sf, st, "QALA205", `export default ${name} -> export { ${name} }`, [{ start: st.getStart(sf), end: st.end, text: `export { ${name} };` }]);
+        } else this.skip(sf, st, "QALA205", "default export of an expression: name it (const x = ...; export { x })");
       }
     }
     this.defaults.set(sf.fileName, name);
@@ -188,7 +190,7 @@ class Pass {
     const spec = decl.moduleSpecifier.text;
     const bindings = clause.namedBindings;
     if (bindings !== undefined && ts.isNamespaceImport(bindings)) {
-      this.skip(sf, decl, `import ${local}, * as ...: rewrite by hand`);
+      this.skip(sf, decl, "QALA206", `import ${local}, * as ...: rewrite by hand`);
       return;
     }
     const others = bindings === undefined ? [] : (bindings as ts.NamedImports).elements.map((e) => e.getText(sf));
@@ -199,11 +201,11 @@ class Pass {
     if (inProject) {
       const name = this.defaultExport(target);
       if (name === null) {
-        this.skip(sf, decl, `import ${local} from "${spec}": the module has no nameable default export`);
+        this.skip(sf, decl, "QALA206", `import ${local} from "${spec}": the module has no nameable default export`);
         return;
       }
       const item = name === local ? name : `${name} as ${local}`;
-      this.fix(sf, decl, `import ${local} from "${spec}" -> import { ${item} }`, [{ start: clause.getStart(sf), end: clause.end, text: `${typeKw}{ ${[item, ...others].join(", ")} }` }]);
+      this.fix(sf, decl, "QALA206", `import ${local} from "${spec}" -> import { ${item} }`, [{ start: clause.getStart(sf), end: clause.end, text: `${typeKw}{ ${[item, ...others].join(", ")} }` }]);
       return;
     }
     if (spec.startsWith(".")) return;
@@ -227,13 +229,13 @@ class Pass {
     const scope = new Set(this.checker.getSymbolsInScope(sf, ts.SymbolFlags.Value | ts.SymbolFlags.Type | ts.SymbolFlags.Namespace).filter((s) => s !== localSymbol).map((s) => s.name));
     const names = [...members.keys()];
     if (!ok || names.some((m) => scope.has(m) || others.includes(m))) {
-      this.skip(sf, decl, `import ${local} from "${spec}": default import of a package; use named imports by hand`);
+      this.skip(sf, decl, "QALA206", `import ${local} from "${spec}": default import of a package; use named imports by hand`);
       return;
     }
     const edits: Edit[] = accesses.map((a) => ({ start: a.getStart(sf), end: a.end, text: a.name.text }));
     if (names.length === 0 && others.length === 0) edits.push({ start: decl.getStart(sf), end: decl.moduleSpecifier.getStart(sf), text: "import " });
     else edits.push({ start: clause.getStart(sf), end: clause.end, text: `${typeKw}{ ${[...names, ...others].join(", ")} }` });
-    this.fix(sf, decl, `import ${local} from "${spec}" -> import { ${names.join(", ")} }`, edits);
+    this.fix(sf, decl, "QALA206", `import ${local} from "${spec}" -> import { ${names.join(", ")} }`, edits);
   }
 
   // ─── 6. export * from "package" ─────────────────────────────────────────────
@@ -244,7 +246,7 @@ class Pass {
     if (spec.startsWith(".")) return;
     const symbol = this.checker.getSymbolAtLocation(decl.moduleSpecifier);
     if (symbol === undefined) {
-      this.skip(sf, decl, `export * from "${spec}": the package does not resolve; list its exports by name`);
+      this.skip(sf, decl, "QALA207", `export * from "${spec}": the package does not resolve; list its exports by name`);
       return;
     }
     const values: string[] = [];
@@ -260,7 +262,7 @@ class Pass {
     const start = decl.getStart(sf);
     const lineStart = sf.text.lastIndexOf("\n", start - 1) + 1;
     const indent = sf.text.slice(lineStart, start).replace(/\S.*$/, "");
-    this.fix(sf, decl, `export * from "${spec}" -> ${values.length + types.length} named re-exports`, [{ start, end: decl.end, text: lines.join(`\n${indent}`) || `export {};` }]);
+    this.fix(sf, decl, "QALA207", `export * from "${spec}" -> ${values.length + types.length} named re-exports`, [{ start, end: decl.end, text: lines.join(`\n${indent}`) || `export {};` }]);
   }
 }
 

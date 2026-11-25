@@ -106,7 +106,8 @@ parameter types, `resource(Model)` for plain CRUD, and a typed `env` from `.env.
 | Middleware | Global (`app/kernel.ts`) or per controller; `cors`, `requestLogger`, `securityHeaders`, `rateLimit` included |
 | Config | `defineConfig(env => ({ port: env.number("PORT", 3000) }))`, `.env` loading, all missing variables reported at startup |
 | Client | `@qala/client`: typed calls, `ApiError` with server details, custom transport (in-process testing) |
-| CLI | `qala new / dev / build / start / generate / routes / check / migrate / db:pull / make:*` |
+| CLI | `qala new / dev / build / start / generate / routes / check / migrate / db:pull / make:*`; `--json` on `check`, `routes`, `doctor` |
+| AI agents | `qala new` writes an `AGENTS.md` (and `CLAUDE.md`) with the layout, commands and native rules; diagnostics have stable codes (`QALA101`) with a fix and docs link — see [Using Qala with AI agents](https://prestgg1.github.io/qala/guide/ai) |
 
 ## Quick start
 
@@ -329,7 +330,7 @@ Qala is young (0.1). scriptc itself is experimental. The PostgreSQL client cover
 
 Full guide: https://prestgg1.github.io/qala/. For language models and coding agents:
 [llms.txt](https://prestgg1.github.io/qala/llms.txt) (index) and
-[llms-full.txt](https://prestgg1.github.io/qala/llms-full.txt) (everything in one file).
+[llms-full.txt](https://prestgg1.github.io/qala/llms-full.txt) (everything in one file); see also [Using Qala with AI agents](https://prestgg1.github.io/qala/guide/ai).
 
 ## License
 
