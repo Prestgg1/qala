@@ -25,7 +25,7 @@ database/migrations/ 0001_create_tasks.sql, ...
 | layer | may import |
 |---|---|
 | `domain` | domain, `@qala/core` |
-| `application` | application, domain, `@qala/core` |
+| `application` | application, domain, `@qala/core`, `@qala/jobs` |
 | `infrastructure` | infrastructure, application, domain, any package |
 | `http` | http, application, domain, `@qala/core` — never infrastructure |
 | `providers.ts`, `kernel.ts`, `config` | anything (composition roots) |
@@ -146,18 +146,19 @@ nor reports a client that leaves a streamed response.
 
 ```ts
 export function onStart(app: App, process: { primary: boolean }): void {
-  app.container.get(RealtimeBus).start();          // every process
-  if (process.primary) app.container.get(Jobs).start(); // once
+  app.container.get(RealtimeBus).start();                     // every process
+  if (process.primary) app.container.get(Scheduler).start();  // once
+  app.container.get(Jobs).start(app, { concurrency: 4 });     // @qala/jobs: safe in every process (SKIP LOCKED)
 }
 ```
 
 ### Shutdown hook
 
-`app/kernel.ts` may also export `onShutdown(app)`. It runs on SIGTERM/SIGINT after in-flight requests finished and before the database pool closes; see [Graceful shutdown](./deployment#graceful-shutdown).
+`app/kernel.ts` may also export `onShutdown(app)`. It runs on SIGTERM/SIGINT after in-flight requests finished and before the database pool closes; see [Graceful shutdown](./deployment#graceful-shutdown). (`Jobs.start(app)` from [`@qala/jobs`](./jobs) registers its own shutdown hook.)
 
 ```ts
 export async function onShutdown(app: App): Promise<void> {
-  await app.container.get(Jobs).stop();
+  await app.container.get(Scheduler).stop();
 }
 ```
 

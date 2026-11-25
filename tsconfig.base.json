@@ -15,6 +15,7 @@
       "@qala/core/testing": ["./packages/core/src/testing.ts"],
       "@qala/client": ["./packages/client/src/index.ts"],
       "@qala/crdt": ["./packages/crdt/src/index.ts"],
+      "@qala/jobs": ["./packages/jobs/src/index.ts"],
       "@qala/session": ["./packages/session/src/index.ts"]
     }
   }

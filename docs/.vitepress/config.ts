@@ -54,6 +54,7 @@ export default defineConfig({
           { text: "Sessions and CSRF", link: "/guide/sessions" },
           { text: "Errors", link: "/guide/errors" },
           { text: "Events", link: "/guide/events" },
+          { text: "Background jobs", link: "/guide/jobs" },
           { text: "Config", link: "/guide/config" },
           { text: "Testing", link: "/guide/testing" },
         ],

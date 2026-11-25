@@ -55,6 +55,13 @@
         "yjs": "13.6.33",
       },
     },
+    "packages/jobs": {
+      "name": "@qala/jobs",
+      "version": "0.0.0",
+      "dependencies": {
+        "@qala/core": "workspace:^",
+      },
+    },
     "packages/session": {
       "name": "@qala/session",
       "version": "0.1.0",
@@ -228,6 +235,8 @@
     "@qala/core": ["@qala/core@workspace:packages/core"],
 
     "@qala/crdt": ["@qala/crdt@workspace:packages/crdt"],
+
+    "@qala/jobs": ["@qala/jobs@workspace:packages/jobs"],
 
     "@qala/session": ["@qala/session@workspace:packages/session"],
 
