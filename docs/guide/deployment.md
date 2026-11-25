@@ -122,7 +122,17 @@ COPY db-ca.pem /app/db-ca.pem
 
 ## Migrations
 
-`qala migrate` runs on Bun, not inside the binary. Run it as a separate step before the new version starts (a CI job, a Kubernetes `Job` or init container, the `migrate` Docker stage). Only one migrator should run at a time.
+`qala migrate` runs on Bun, not inside the binary. Run it as a separate step before the new version starts (a CI job, a Kubernetes `Job` or init container, the `migrate` Docker stage).
+
+It is safe to start it from several places at once: it holds a PostgreSQL advisory lock for the whole run, so a second migrator waits, then finds nothing left to apply. Each migration runs in its own transaction.
+
+On a busy database, bound how long a migration may wait for table locks (instead of queueing every query behind its `alter table`) and how long a statement may run:
+
+```sh
+qala migrate --lock-timeout 5s --statement-timeout 10min
+```
+
+If a release goes wrong, `qala migrate:rollback` (or `--steps N`) runs the `-- migrate:down` sections of the most recent migrations; `qala migrate:status` shows what is applied. See [Migrations](./migrations.md#rolling-back).
 
 ## Production checklist
 

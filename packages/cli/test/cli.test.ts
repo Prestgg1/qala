@@ -233,6 +233,8 @@ describe("make:*", () => {
     expect(makeMigration(root, "create_notes").created).toEqual(["database/migrations/0001_create_notes.sql"]);
     expect(makeMigration(root, "add index").created).toEqual(["database/migrations/0002_add_index.sql"]);
     expect(readFileSync(join(root, "database/migrations/0001_create_notes.sql"), "utf8")).toContain("create table notes");
+    expect(readFileSync(join(root, "database/migrations/0001_create_notes.sql"), "utf8")).toContain("-- migrate:down\ndrop table notes;");
+    expect(readFileSync(join(root, "database/migrations/0002_add_index.sql"), "utf8")).toContain("-- migrate:down\n");
     // make:controller --resource writes resource(Model) and the model it needs.
     expect(readFileSync(join(root, "app/http/controllers/notes.controller.ts"), "utf8")).toContain('export const NotesController = resource(Note, { defaultOrder: ["createdAt", "desc"] });');
     expect(readFileSync(join(root, "app/domain/note.ts"), "utf8")).toContain("id: t.uuid().primary(),");

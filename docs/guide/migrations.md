@@ -8,7 +8,48 @@ and writes the SQL for the difference.
 qala migrate:make add_due_dates   # writes database/migrations/0003_add_due_dates.sql
 qala migrate                      # applies it
 qala migrate:make check --print   # print the SQL instead of writing a file
+qala migrate:status               # which migrations are applied, which are pending
+qala migrate:rollback             # undo the last one (--steps 3 for the last three)
 ```
+
+Applied migrations are recorded in the `qala_migrations` table (`name`, `applied_at`).
+
+## Rolling back
+
+A migration file may end with a down section: everything after a line `-- migrate:down` is the SQL that undoes
+it. `qala migrate` runs only the part above the marker (an optional `-- migrate:up` line may mark its start).
+
+```sql
+create table labels (id uuid primary key default gen_random_uuid(), name text not null);
+
+-- migrate:down
+drop table labels;
+```
+
+`qala migrate:rollback [--steps N]` (default 1) reverts the most recently applied migrations, newest first. Each down
+runs in its own transaction together with deleting its `qala_migrations` row, so a failing down leaves that migration
+applied. Before reverting anything it checks all N: if one has no down section (or one with no statements), or its file
+is gone, it stops with an error and changes nothing. `migrate:make` and `make:migration` write an empty
+`-- migrate:down` section for you to fill in (`make:migration create_x` fills in `drop table x`).
+
+Rollback is for fixing a bad deploy, not a routine step: a down that drops a table or column loses its data.
+
+## Running in production
+
+`qala migrate` and `qala migrate:rollback` hold a PostgreSQL advisory lock (`pg_advisory_lock`, key
+`MIGRATION_LOCK_KEY` from `@qala/core`) on one connection for the whole run. Two deploys that migrate at the same time
+take turns: the second waits, then finds nothing left to apply. The lock is released when the run ends, also on
+failure, and by the server if the process dies.
+
+Two options are set (`set local`) in each migration's transaction:
+
+| flag | effect |
+|---|---|
+| `--lock-timeout 5s` | fail a migration that waits longer for a table lock, instead of blocking every query queued behind its `alter table` |
+| `--statement-timeout 10min` | fail a statement that runs longer |
+
+From code: `migrate(db, files, { lockTimeout: "5s", statementTimeout: "10min" })`, `rollback(db, files, steps, options)`
+and `migrationStatus(db, files)`, with `files` as `{ name, sql }[]`.
 
 ## What it generates
 
@@ -64,6 +105,9 @@ create table "labels" (
 );
 
 alter table "labels" add constraint "labels_project_id_fkey" foreign key ("project_id") references "projects" ("id") on delete cascade;
+
+-- migrate:down
+-- SQL that undoes the statements above (run by qala migrate:rollback).
 ```
 
 ## Types
