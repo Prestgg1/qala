@@ -25,7 +25,7 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - `Pool.close()` (and `Database.close()`) refuse new queries and close connections still in use when they are released.
 - `qala build` deletes the LLVM IR (`main.ll`, tens of MB) scriptc leaves next to the binary; `--keep-ir` keeps it.
 - Docs: the example binary is ~5 MB (the ~3 MB figure predates WebSockets, streaming and CRDT); clang is listed as a requirement.
-- scriptc 0.4.13 → 0.4.14 (no framework changes needed; unit, native and Bun end-to-end suites pass).
+- scriptc 0.4.13 → 0.4.14 → 0.4.16 (no framework changes needed; unit, native and Bun end-to-end suites pass). 0.4.15 is skipped: its npm runtime packs were incompatible with the CLI.
 
 ## 0.1.0
 
