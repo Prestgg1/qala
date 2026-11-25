@@ -14,9 +14,9 @@ export { cors, requestLogger, securityHeaders, rateLimit, type CorsOptions, type
 export { Env, defineConfig, loadEnv, parseDotenv } from "./config";
 export { Logger, type LogLevel } from "./log";
 // db
-export { Database, Transaction, Table, TableEngine, ident, type DatabaseOptions, type FindOptions, type Direction, type RunSql, type RunRaw, type RunBatch } from "./db/database";
+export { Database, Session, Transaction, Table, TableEngine, ident, type DatabaseOptions, type FindOptions, type Direction, type RunSql, type RunRaw, type RunBatch } from "./db/database";
 export { model, ModelDef, snakeCase, toIso, pgIso, type RowDecoder, type Model, type InferModel, type ModelOptions } from "./db/model";
-export { migrate, splitStatements, type MigrationFile } from "./db/migrate";
+export { migrate, rollback, migrationStatus, parseMigration, splitStatements, MIGRATION_LOCK_KEY, type MigrationFile, type MigrateOptions, type MigrationState, type ParsedMigration } from "./db/migrate";
 export { DatabaseError, parseUrl, Pool, Connection, QueryResult, RawResult, ConnectionStats, Listener, Subscription, type PipelineItem, type DbValue, type DbRow, type ConnectionConfig } from "./db/pg";
 // mail
 export { SmtpClient, SmtpError, SendResult, buildMessage, parseAddress, encodeWords, quotedPrintable, dotStuff, type SmtpOptions, type MailMessage } from "./mail/smtp";

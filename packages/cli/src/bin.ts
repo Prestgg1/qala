@@ -6,7 +6,7 @@ import { fixApp } from "./fix";
 import type { SkippedModel } from "./models";
 import { makeController, makeMiddleware, makeMigration, makeModel, makeRepository, makeService, makeTest, type MakeResult } from "./make";
 import { pullCommand } from "./pull";
-import { build, dev, migrateCommand, start } from "./run";
+import { build, dev, migrateCommand, rollbackCommand, start, statusCommand } from "./run";
 import { migrateMakeCommand } from "./migrate-make";
 import { routeTable, scanControllers } from "./scan";
 import { scaffold } from "./scaffold";
@@ -21,7 +21,10 @@ ${color.bold("Develop")}
   generate                    write .qala/routes.gen.ts, api.ts, models.gen.ts, main.ts
   routes                      list every route (METHOD PATH controller.action)
   check [--fix]               enforce the Clean Architecture dependency rule; --fix rewrites scriptc pitfalls first
-  migrate                     apply database/migrations/*.sql
+  migrate [--lock-timeout 5s] [--statement-timeout 5min]
+                              apply pending database/migrations/*.sql (under an advisory lock)
+  migrate:rollback [--steps N]  undo the last N (default 1) migrations with their -- migrate:down sections
+  migrate:status              list migrations: applied or pending
   migrate:make <name> [--print]  write the SQL that makes the database match the models
   db:pull [--schema public] [--tables a,b] [--out app/domain/schema] [--url postgres://...] [--force]
                               generate models from an existing PostgreSQL database
@@ -64,7 +67,7 @@ function parseArgs(argv: string[]): Args {
   return { positional, flags };
 }
 
-const VALUE_FLAGS = new Set(["out", "optimization", "core", "schema", "tables", "url"]);
+const VALUE_FLAGS = new Set(["out", "optimization", "core", "schema", "tables", "url", "steps", "lock-timeout", "statement-timeout"]);
 
 function flag(args: Args, name: string): string | undefined {
   const v = args.flags.get(name);
@@ -156,7 +159,11 @@ export async function main(argv: string[]): Promise<number> {
     case "start":
       return start(findRoot(), flag(args, "out") ?? "dist/app");
     case "migrate":
-      return migrateCommand(findRoot());
+      return migrateCommand(findRoot(), { lockTimeout: flag(args, "lock-timeout"), statementTimeout: flag(args, "statement-timeout") });
+    case "migrate:rollback":
+      return rollbackCommand(findRoot(), Number(flag(args, "steps") ?? "1"), { lockTimeout: flag(args, "lock-timeout"), statementTimeout: flag(args, "statement-timeout") });
+    case "migrate:status":
+      return statusCommand(findRoot());
     case "migrate:make":
       return migrateMakeCommand(findRoot(), needName("add_due_dates"), { print: args.flags.get("print") === true });
     case "db:pull": {
