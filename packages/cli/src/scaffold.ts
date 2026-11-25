@@ -23,7 +23,7 @@ export function scaffold(dir: string, options: NewOptions = {}): string[] {
         type: "module",
         scripts: { dev: "qala dev", build: "qala build", start: "qala start", check: "qala check", routes: "qala routes", migrate: "qala migrate", test: "bun test", typecheck: "tsc --noEmit" },
         dependencies: { "@qala/core": "^0.1.0" },
-        devDependencies: { "@qala/cli": "^0.1.0", "@types/bun": "^1.3.0", "@types/node": "^24.0.0", scriptc: "0.4.13", typescript: "^5.9.0" },
+        devDependencies: { "@qala/cli": "^0.1.0", "@types/bun": "^1.3.0", "@types/node": "^24.0.0", scriptc: "0.4.16", typescript: "^5.9.0" },
         trustedDependencies: ["scriptc"],
       },
       null,

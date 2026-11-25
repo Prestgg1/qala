@@ -33,8 +33,10 @@ qala generate                 # after adding/renaming controllers, models, servi
 qala check --fix              # rewrites native pitfalls, then checks layers (exit 1 on violations)
 qala check --json             # same, machine-readable: code, file, line, column, fix, docs
 qala routes --json            # every route with its file and line
-qala make:controller x --resource | make:model | make:repository | make:service | make:middleware | make:test | make:migration
-qala migrate:make <name> && qala migrate
+qala make:controller x --resource | make:model | make:repository | make:service | make:middleware | make:test | make:migration | make:job
+qala migrate:make <name> && qala migrate   # write the -- migrate:down section too
+qala migrate:status           # applied / pending; qala migrate:rollback [--steps N] undoes
+qala openapi                  # OpenAPI 3.1 document of the routes
 qala build                    # check + generate + native binary in dist/app
 bun test                      # tests (qala make:test x writes one)
 qala doctor --json            # toolchain and database

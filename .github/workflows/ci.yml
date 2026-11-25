@@ -74,6 +74,16 @@ jobs:
         env:
           QALA_NATIVE: "1"
         run: bun test packages/core/test/lifecycle.test.ts
+      - name: "@qala/jobs: enqueue, retry, dead, outbox, shutdown (native binary and Bun)"
+        env:
+          QALA_NATIVE: "1"
+          QALA_TEST_DATABASE_URL: postgres://qala:qala@localhost:5432/qala_example
+        run: bun test packages/jobs/test/native.test.ts
+      - name: sessions and CSRF (native binary and Bun)
+        env:
+          QALA_NATIVE: "1"
+          QALA_TEST_DATABASE_URL: postgres://qala:qala@localhost:5432/qala_example
+        run: bun test packages/session/test/native.test.ts
       - name: binary report
         working-directory: examples/tasks
         run: |

@@ -334,6 +334,49 @@ export class Transaction {
   }
 }
 
+/**
+ * One connection checked out of the pool for the duration of `db.session(...)`: everything runs on the
+ * same server session, so session state (advisory locks, `set`, temporary tables) holds across calls.
+ */
+export class Session {
+  constructor(private readonly connection: Connection) {}
+
+  async query(sql: string, params: DbValue[] = []): Promise<DbRow[]> {
+    return (await this.connection.query(sql, params)).rows;
+  }
+
+  async execute(sql: string, params: DbValue[] = []): Promise<number> {
+    return (await this.connection.query(sql, params)).affected;
+  }
+
+  /** Runs `fn` in a transaction on this session's connection: committed if it resolves, rolled back if it throws. */
+  async transaction<T>(fn: (tx: Transaction) => Promise<T>): Promise<T> {
+    const connection = this.connection;
+    const run: RunSql = (sql, params) => connection.query(sql, params);
+    const runRaw: RunRaw = (sql, params) => connection.queryRaw(sql, params);
+    const runBatch: RunBatch = (items) => connection.pipeline(items);
+    const changes = new ChangeQueue(true);
+    await connection.query("begin", []);
+    try {
+      const pending: Promise<unknown> = fn(new Transaction(run, runRaw, runBatch, changes));
+      const result: unknown = await pending;
+      await connection.query("commit", []);
+      await changes.flush();
+      // biome-ignore lint/suspicious/noExplicitAny: see Database.transaction
+      const out: any = result;
+      return out;
+    } catch (error) {
+      changes.discard();
+      try {
+        await connection.query("rollback", []);
+      } catch {
+        // the connection is gone; the server rolls back on its own
+      }
+      throw error;
+    }
+  }
+}
+
 export type DatabaseOptions = { max?: number };
 
 /**
@@ -413,6 +456,24 @@ export class Database {
       throw error;
     } finally {
       if (!released) this.pool.release(connection);
+    }
+  }
+
+  /**
+   * Runs `fn` with one connection pinned for its whole duration (the pool otherwise hands each query any
+   * connection). Use it for session state such as advisory locks: `pg_advisory_unlock` must run on the
+   * connection that took the lock. The connection goes back to the pool when `fn` settles.
+   */
+  async session<T>(fn: (s: Session) => Promise<T>): Promise<T> {
+    const connection: Connection = await this.pool.acquire();
+    try {
+      const pending: Promise<unknown> = fn(new Session(connection));
+      const result: unknown = await pending;
+      // biome-ignore lint/suspicious/noExplicitAny: see transaction
+      const out: any = result;
+      return out;
+    } finally {
+      this.pool.release(connection);
     }
   }
 

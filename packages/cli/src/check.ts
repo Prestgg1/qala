@@ -29,7 +29,8 @@ const ALLOWED: Record<Exclude<Layer, "root">, Layer[]> = {
 /** Packages each layer may import. `*` = any package (infrastructure talks to the outside world). */
 const PACKAGES: Record<Exclude<Layer, "root">, string[]> = {
   domain: ["@qala/core"],
-  application: ["@qala/core"],
+  // @qala/jobs: services enqueue jobs and app/application/jobs/ defines them (the queue is part of the framework).
+  application: ["@qala/core", "@qala/jobs"],
   infrastructure: ["*"],
   http: ["@qala/core"],
   shared: ["@qala/core"],

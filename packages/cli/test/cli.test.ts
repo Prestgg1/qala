@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { checkArchitecture } from "../src/check";
 import { generate } from "../src/codegen";
-import { makeController, makeMiddleware, makeMigration, makeModel, makeRepository, makeService, resourceNames } from "../src/make";
+import { jobsTableSql, makeController, makeJob, makeJobsTable, makeMiddleware, makeMigration, makeModel, makeRepository, makeService, resourceNames } from "../src/make";
 import { routeIdentity, routeTable, scanControllers } from "../src/scan";
 import { scaffold } from "../src/scaffold";
 
@@ -46,7 +46,7 @@ function app(files: Record<string, string> = {}): string {
         noEmit: true,
         types: ["node", "bun"],
         typeRoots: [join(REPO, "node_modules/@types")],
-        paths: { "@qala/core": [CORE] },
+        paths: { "@qala/core": [CORE], "@qala/jobs": [join(REPO, "packages/jobs/src/index.ts")] },
       },
       include: ["app", "config", ".qala"],
     }),
@@ -233,6 +233,8 @@ describe("make:*", () => {
     expect(makeMigration(root, "create_notes").created).toEqual(["database/migrations/0001_create_notes.sql"]);
     expect(makeMigration(root, "add index").created).toEqual(["database/migrations/0002_add_index.sql"]);
     expect(readFileSync(join(root, "database/migrations/0001_create_notes.sql"), "utf8")).toContain("create table notes");
+    expect(readFileSync(join(root, "database/migrations/0001_create_notes.sql"), "utf8")).toContain("-- migrate:down\ndrop table notes;");
+    expect(readFileSync(join(root, "database/migrations/0002_add_index.sql"), "utf8")).toContain("-- migrate:down\n");
     // make:controller --resource writes resource(Model) and the model it needs.
     expect(readFileSync(join(root, "app/http/controllers/notes.controller.ts"), "utf8")).toContain('export const NotesController = resource(Note, { defaultOrder: ["createdAt", "desc"] });');
     expect(readFileSync(join(root, "app/domain/note.ts"), "utf8")).toContain("id: t.uuid().primary(),");
@@ -259,6 +261,63 @@ describe("make:*", () => {
     expect(providers).toContain("singleton<Database>(Database, () => new Database(env.DATABASE_URL)),");
     expect(providers).toContain("bind<TaskRepository>(TaskRepository, PgTaskRepository),");
     expect(providers).toContain("singleton<TaskService>(TaskService, (c) => new TaskService(c.get<TaskRepository>(TaskRepository))),");
+    expect(typecheck(root)).toBe("");
+    expect(checkArchitecture(root).violations).toEqual([]);
+  });
+});
+
+describe("make:job and make:jobs-table", () => {
+  test("the migration matches @qala/jobs' own SQL", async () => {
+    const jobs = await import("../../jobs/src/table");
+    expect(jobsTableSql()).toBe(jobs.jobsTableSql());
+    expect(jobsTableSql("my_jobs")).toBe(jobs.jobsTableSql("my_jobs"));
+  });
+
+  test("a job, a service that enqueues it, Jobs in providers and a worker in onStart: generate, typecheck, check", () => {
+    const root = app({
+      ".env.example": "DATABASE_URL=postgres://u:p@localhost:5432/db # type: url\n",
+      "database/migrations/0001_create_notes.sql": "create table notes (id int);\n",
+      "app/providers.ts": `import { Database, provide, type Provider } from "@qala/core";
+import { Jobs } from "@qala/jobs";
+import { SendWelcome } from "./application/jobs/send-welcome.job";
+
+export const providers: Provider[] = [provide(Jobs, (c) => new Jobs(c.get(Database), [SendWelcome]))];
+`,
+      "app/application/welcome.service.ts": `import { Jobs } from "@qala/jobs";
+import { SendWelcome } from "./jobs/send-welcome.job";
+
+export class WelcomeService {
+  constructor(private readonly jobs: Jobs) {}
+
+  welcome(id: string): Promise<string> {
+    return this.jobs.enqueue(SendWelcome, { id }, { delay: 1000 });
+  }
+}
+`,
+      "app/kernel.ts": `import type { App } from "@qala/core";
+import { Jobs } from "@qala/jobs";
+
+export const kernel = {};
+
+export function onStart(app: App, process: { primary: boolean }): void {
+  app.container.get(Jobs).start(app, { concurrency: process.primary ? 4 : 2 });
+}
+`,
+    });
+    const made = makeJob(root, "SendWelcomeJob");
+    expect(made.created).toEqual(["app/application/jobs/send-welcome.job.ts"]);
+    expect(made.notes.join("\n")).toContain("qala make:jobs-table");
+    const job = readFileSync(join(root, made.created[0]!), "utf8");
+    expect(job).toContain('export const SendWelcome = defineJob(\n  "send-welcome",');
+    expect(job).toContain("console.log(`send-welcome ${payload.id} (attempt ${job.attempt}/${job.maxAttempts})`);");
+    expect(makeJobsTable(root).created).toEqual(["database/migrations/0002_create_qala_jobs.sql"]);
+    expect(readFileSync(join(root, "database/migrations/0002_create_qala_jobs.sql"), "utf8")).toBe(jobsTableSql());
+    expect(() => makeJobsTable(root)).toThrow(/already creates qala_jobs/);
+    expect(() => makeJobsTable(root, "bad-name")).toThrow(/not a plain/);
+    expect(makeJob(root, "other").notes.join("\n")).not.toContain("make:jobs-table");
+    generate(root);
+    expect(readFileSync(join(root, ".qala/providers.gen.ts"), "utf8")).toContain("new WelcomeService(c.get<Jobs>(Jobs))");
+    expect(readFileSync(join(root, ".qala/main.ts"), "utf8")).toContain("onStart(app, { primary: !isWorker() })");
     expect(typecheck(root)).toBe("");
     expect(checkArchitecture(root).violations).toEqual([]);
   });
@@ -340,6 +399,22 @@ describe("onStart hook", () => {
     writeFileSync(join(root, "app/kernel.ts"), "export const kernel = {};\n");
     expect(renderMain(root)).not.toContain("onShutdown");
   });
+
+  test("main.ts passes the kernel's health / readyTimeout / requestId options", async () => {
+    const { renderMain } = await import("../src/codegen");
+    const { mkdtempSync, mkdirSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const root = mkdtempSync(join(tmpdir(), "qala-health-"));
+    mkdirSync(join(root, "app"), { recursive: true });
+    writeFileSync(join(root, "app/kernel.ts"), "export const kernel = { health: false, readyTimeout: 500 };\n");
+    const main = renderMain(root);
+    expect(main).toContain("  health: kernel.health,");
+    expect(main).toContain("  readyTimeout: kernel.readyTimeout,");
+    expect(main).not.toContain("requestId");
+    writeFileSync(join(root, "app/kernel.ts"), "export const kernel = {};\n");
+    expect(renderMain(root)).not.toContain("health");
+  });
 });
 
 describe("app.gen.ts and make:test", () => {
@@ -370,5 +445,27 @@ describe("app.gen.ts and make:test", () => {
     expect(text).toContain("client.tasks.index({})");
     expect(makeTest(root, "notes").created).toEqual(["test/notes.test.ts"]);
     expect(readFileSync(join(root, "test/notes.test.ts"), "utf8")).not.toContain("client.notes.index({});\n    expect(Array");
+  });
+});
+
+describe("openapi opt-in", () => {
+  test("main.ts serves /openapi.json only when package.json asks for it", async () => {
+    const { renderMain, renderAppOptions, renderOpenApiModule } = await import("../src/codegen");
+    const { mkdtempSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const root = mkdtempSync(join(tmpdir(), "qala-openapi-"));
+    writeFileSync(join(root, "package.json"), JSON.stringify({ name: "x" }));
+    expect(renderMain(root)).not.toContain("openapi");
+    writeFileSync(join(root, "package.json"), JSON.stringify({ name: "x", qala: { openapi: true } }));
+    expect(renderMain(root)).not.toContain("openapi");
+    writeFileSync(join(root, "package.json"), JSON.stringify({ name: "x", qala: { openapi: { serve: true } } }));
+    const main = renderMain(root);
+    expect(main).toContain('import { QalaOpenapiController } from "./openapi.gen";');
+    expect(main).toContain('controllers: [...controllers, { name: "qalaOpenapi", prefix: "/openapi.json", controller: QalaOpenapiController }],');
+    expect(renderAppOptions(root)).toContain("QalaOpenapiController");
+    const mod = renderOpenApiModule('{"openapi":"3.1.0"}');
+    expect(mod).toContain('export const openapiJson: string = "{\\"openapi\\":\\"3.1.0\\"}";');
+    expect(mod).toContain("new Reply(200, openapiJson");
   });
 });

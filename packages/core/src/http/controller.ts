@@ -1,4 +1,5 @@
 import type { Container, Token } from "../container";
+import type { ModelDef } from "../db/model";
 import type { ActionDef } from "./action";
 import type { Middleware } from "./middleware";
 
@@ -9,6 +10,8 @@ type Resolved<D extends Deps> = { [K in keyof D]: D[K] extends Token<infer T> ? 
 export class ControllerDef {
   /** The resource a returned `null` names in its 404, e.g. "Task" (set by `resource()`; "" → "Not found"). */
   resourceName = "";
+  /** What `resource()` serves, for documentation (`@qala/openapi`); null for other controllers. */
+  resource: ResourceMeta | null = null;
 
   constructor(
     readonly depNames: string[],
@@ -21,7 +24,10 @@ export class ControllerDef {
 
   /** The same controller with authentication required (used by the generated routes for `(auth)` folders). */
   withAuth(): ControllerDef {
-    return new ControllerDef(this.depNames, this.depTokens, this.build, this.middleware, true);
+    const out = new ControllerDef(this.depNames, this.depTokens, this.build, this.middleware, true);
+    out.resourceName = this.resourceName;
+    out.resource = this.resource;
+    return out;
   }
 
   /** The actions with dependencies resolved from `container`. */
@@ -30,6 +36,17 @@ export class ControllerDef {
     for (let i = 0; i < this.depNames.length; i++) deps[this.depNames[i]!] = container.resolve(this.depTokens[i]);
     return this.build(deps);
   }
+}
+
+/** The model, `index` filters and policy of a `resource()` controller. */
+export class ResourceMeta {
+  constructor(
+    readonly model: ModelDef,
+    readonly filters: string[],
+    readonly hasPolicy: boolean,
+    readonly pageSize: number,
+    readonly maxPageSize: number,
+  ) {}
 }
 
 /** The typed view of a controller: `A` maps action names to `Action` types (read by the client). */

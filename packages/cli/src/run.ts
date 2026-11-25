@@ -108,9 +108,14 @@ export function start(root: string, out: string): Promise<number> {
 }
 
 type Db = { close(): void };
+type MigrationFile = { name: string; sql: string };
+export type MigrateCliOptions = { lockTimeout?: string; statementTimeout?: string };
+type MigrationState = { name: string; applied: boolean; appliedAt: string; missing: boolean; hasDown: boolean };
 type CoreDb = {
   Database: new (url: string) => Db;
-  migrate: (db: Db, files: { name: string; sql: string }[]) => Promise<string[]>;
+  migrate: (db: Db, files: MigrationFile[], options?: MigrateCliOptions) => Promise<string[]>;
+  rollback?: (db: Db, files: MigrationFile[], steps?: number, options?: MigrateCliOptions) => Promise<string[]>;
+  migrationStatus?: (db: Db, files: MigrationFile[]) => Promise<MigrationState[]>;
 };
 
 /** Loads @qala/core as the app resolves it (falls back to the copy next to this CLI, in the monorepo). */
@@ -127,15 +132,18 @@ export async function loadCore(root: string): Promise<CoreDb> {
   return core as CoreDb;
 }
 
-/** `qala migrate`: apply database/migrations/*.sql in order (each once). */
-export async function migrateCommand(root: string): Promise<number> {
+function migrationFiles(root: string): MigrationFile[] {
   const dir = join(root, LAYOUT.migrations);
-  const files = existsSync(dir)
+  return existsSync(dir)
     ? readdirSync(dir)
         .filter((f) => f.endsWith(".sql"))
         .sort()
         .map((name) => ({ name, sql: readFileSync(join(dir, name), "utf8") }))
     : [];
+}
+
+/** Runs `fn` with the app's @qala/core and a Database on its URL, from the app's directory. */
+async function withCoreDb(root: string, fn: (core: CoreDb, db: Db) => Promise<number>): Promise<number> {
   const url = await appDatabaseUrl(root);
   const previous = process.cwd();
   process.chdir(root);
@@ -143,14 +151,60 @@ export async function migrateCommand(root: string): Promise<number> {
     const core = await loadCore(root);
     const db = new core.Database(url);
     try {
-      const applied = await core.migrate(db, files);
-      if (applied.length === 0) console.log(color.dim(`Nothing to migrate (${files.length} migration(s) already applied).`));
-      for (const name of applied) console.log(`${color.green("✓")} ${name}`);
+      return await fn(core, db);
     } finally {
       db.close();
     }
   } finally {
     process.chdir(previous);
   }
-  return 0;
+}
+
+/** `qala migrate`: apply database/migrations/*.sql in order (each once), under the migration lock. */
+export async function migrateCommand(root: string, options: MigrateCliOptions = {}): Promise<number> {
+  const files = migrationFiles(root);
+  return withCoreDb(root, async (core, db) => {
+    const applied = await core.migrate(db, files, options);
+    if (applied.length === 0) console.log(color.dim(`Nothing to migrate (${files.length} migration(s) already applied).`));
+    for (const name of applied) console.log(`${color.green("✓")} ${name}`);
+    return 0;
+  });
+}
+
+/** `qala migrate:rollback [--steps N]`: run the down sections of the last N applied migrations. */
+export async function rollbackCommand(root: string, steps: number, options: MigrateCliOptions = {}): Promise<number> {
+  if (!Number.isInteger(steps) || steps < 1) throw new CliError("--steps must be a positive integer");
+  const files = migrationFiles(root);
+  return withCoreDb(root, async (core, db) => {
+    if (core.rollback === undefined) throw new CliError("This @qala/core has no rollback; update @qala/core");
+    let reverted: string[];
+    try {
+      reverted = await core.rollback(db, files, steps, options);
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("Cannot roll back")) throw new CliError(error.message);
+      throw error;
+    }
+    if (reverted.length === 0) console.log(color.dim("Nothing to roll back."));
+    for (const name of reverted) console.log(`${color.yellow("↩")} ${name}`);
+    return 0;
+  });
+}
+
+/** `qala migrate:status`: every migration and whether it is applied. */
+export async function statusCommand(root: string): Promise<number> {
+  const files = migrationFiles(root);
+  return withCoreDb(root, async (core, db) => {
+    if (core.migrationStatus === undefined) throw new CliError("This @qala/core has no migrationStatus; update @qala/core");
+    const rows = await core.migrationStatus(db, files);
+    if (rows.length === 0) console.log(color.dim("No migrations."));
+    let pending = 0;
+    for (const r of rows) {
+      if (!r.applied) pending++;
+      const state = r.missing ? color.red("applied, file missing") : r.applied ? `${color.green("applied")} ${color.dim(r.appliedAt)}` : color.yellow("pending");
+      const down = r.missing || r.hasDown ? "" : color.dim("  (no down)");
+      console.log(`${r.name}  ${state}${down}`);
+    }
+    if (rows.length > 0) console.log(color.dim(`${rows.length - pending} applied, ${pending} pending`));
+    return 0;
+  });
 }
