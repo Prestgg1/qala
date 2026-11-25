@@ -13,6 +13,7 @@ export { Container, Provider, singleton, transient, value, type Token, type Life
 export { cors, requestLogger, securityHeaders, rateLimit, type CorsOptions, type RateLimitOptions } from "./middleware/index";
 export { Env, defineConfig, loadEnv, parseDotenv } from "./config";
 export { Logger, type LogLevel } from "./log";
+export { validRequestId } from "./http/context";
 // db
 export { Database, Transaction, Table, TableEngine, ident, type DatabaseOptions, type FindOptions, type Direction, type RunSql, type RunRaw, type RunBatch } from "./db/database";
 export { model, ModelDef, snakeCase, toIso, pgIso, type RowDecoder, type Model, type InferModel, type ModelOptions } from "./db/model";

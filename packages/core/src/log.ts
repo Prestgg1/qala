@@ -7,7 +7,17 @@ export class Logger {
   constructor(
     readonly level: LogLevel = "info",
     readonly format: "pretty" | "json" = "pretty",
+    /** Fields added to every line of this logger (see `child`). */
+    readonly fields: Record<string, unknown> = {},
   ) {}
+
+  /** A logger with the same level and format that adds `fields` to every line, e.g. `{ request_id }`. */
+  child(fields: Record<string, unknown>): Logger {
+    const merged: Record<string, unknown> = {};
+    for (const key of Object.keys(this.fields)) merged[key] = this.fields[key];
+    for (const key of Object.keys(fields)) merged[key] = fields[key];
+    return new Logger(this.level, this.format, merged);
+  }
 
   debug(message: string, fields: Record<string, unknown> = {}): void {
     this.write("debug", message, fields);
@@ -25,8 +35,14 @@ export class Logger {
     this.write("error", message, fields);
   }
 
-  private write(level: LogLevel, message: string, fields: Record<string, unknown>): void {
+  private write(level: LogLevel, message: string, own: Record<string, unknown>): void {
     if (ORDER[level] < ORDER[this.level]) return;
+    let fields = own;
+    if (Object.keys(this.fields).length > 0) {
+      fields = {};
+      for (const key of Object.keys(this.fields)) fields[key] = this.fields[key];
+      for (const key of Object.keys(own)) fields[key] = own[key];
+    }
     let line: string;
     if (this.format === "json") {
       const record: Record<string, unknown> = { time: new Date().toISOString(), level, message };

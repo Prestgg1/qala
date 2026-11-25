@@ -120,6 +120,12 @@ export function renderMain(root: string, hasModels = false, hasGeneratedProvider
   if (hasKernel) lines.push("  middleware: kernel.middleware,", "  onError: kernel.onError,", "  exposeErrors: kernel.exposeErrors,");
   // `locale: "az"` in the kernel sets the default language of framework messages.
   if (hasKernel && /\blocale\s*[:,}]/.test(kernelSource)) lines.push("  locale: kernel.locale,");
+  // `health: false` / `requestId: false` / `readyTimeout` in the kernel tune the built-in probes and request ids.
+  if (hasKernel) {
+    for (const key of ["health", "readyTimeout", "requestId"]) {
+      if (new RegExp(`\\b${key}\\s*[:,}]`).test(kernelSource)) lines.push(`  ${key}: kernel.${key},`);
+    }
+  }
   if (hasAuthenticate) lines.push("  authenticate,");
   lines.push("});", "");
   // Event handlers and audit/realtime sinks resolve services from the app's container.

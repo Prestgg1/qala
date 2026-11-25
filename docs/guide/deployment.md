@@ -124,12 +124,19 @@ COPY db-ca.pem /app/db-ca.pem
 
 `qala migrate` runs on Bun, not inside the binary. Run it as a separate step before the new version starts (a CI job, a Kubernetes `Job` or init container, the `migrate` Docker stage). Only one migrator should run at a time.
 
+## Observability
+
+Request ids (`x-request-id`), JSON request logs and the built-in `/health` and `/ready` probes are described in
+[Observability](/guide/observability). `/ready` answers 503 as soon as shutdown starts, so a load balancer stops sending
+traffic while in-flight requests drain.
+
 ## Production checklist
 
 - [ ] `LOG_FORMAT=json` (if your app reads it) so logs are machine-readable
 - [ ] Secrets come from the environment, never from a committed `.env`
 - [ ] TLS terminates at a reverse proxy; `DATABASE_URL` uses `sslmode=verify-full`
-- [ ] A `/health` route exists and the orchestrator probes it
+- [ ] The orchestrator probes `/health` (liveness) and `/ready` (readiness); see [Observability](/guide/observability)
+- [ ] The proxy forwards or sets `x-request-id`, so logs can be joined across services
 - [ ] Migrations run once, before the rollout
 - [ ] `rateLimit` is per process: with `workers: "auto"` the effective limit is multiplied by the core count
 - [ ] Build and runtime use the same architecture (build arm64 on arm64)

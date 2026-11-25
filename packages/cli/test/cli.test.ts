@@ -340,6 +340,22 @@ describe("onStart hook", () => {
     writeFileSync(join(root, "app/kernel.ts"), "export const kernel = {};\n");
     expect(renderMain(root)).not.toContain("onShutdown");
   });
+
+  test("main.ts passes the kernel's health / readyTimeout / requestId options", async () => {
+    const { renderMain } = await import("../src/codegen");
+    const { mkdtempSync, mkdirSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const root = mkdtempSync(join(tmpdir(), "qala-health-"));
+    mkdirSync(join(root, "app"), { recursive: true });
+    writeFileSync(join(root, "app/kernel.ts"), "export const kernel = { health: false, readyTimeout: 500 };\n");
+    const main = renderMain(root);
+    expect(main).toContain("  health: kernel.health,");
+    expect(main).toContain("  readyTimeout: kernel.readyTimeout,");
+    expect(main).not.toContain("requestId");
+    writeFileSync(join(root, "app/kernel.ts"), "export const kernel = {};\n");
+    expect(renderMain(root)).not.toContain("health");
+  });
 });
 
 describe("app.gen.ts and make:test", () => {
